@@ -1,4 +1,5 @@
-"""Étape 6 — construction des features « précoces » (sans fuite).
+"""Étapes 6-7 — construction des features « précoces » (sans fuite), partagée
+entre la classification à risque et la régression de moyenne_generale.
 
 Frontière de fuite (cf. targets.py) : la cible `a_risque` et `moyenne_generale`
 sont des fonctions de `moyenne_matiere`, qui moyenne TOUTES les composantes
@@ -91,4 +92,29 @@ def assemble_dataset(df_long: pd.DataFrame, profile_labeled: pd.DataFrame) -> pd
     safe_cols = ["student_pseudo", "niveau", "classe", "nb_matieres_suivies", "a_risque", "split"]
     identity = profile_labeled[safe_cols]
     dataset = identity.merge(early, on="student_pseudo", how="left")
+    return dataset
+
+
+def assemble_regression_dataset(
+    df_long: pd.DataFrame, profile_labeled: pd.DataFrame, clusters: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Comme assemble_dataset, mais pour la régression : ajoute `moyenne_generale`
+    (la CIBLE, jamais une feature) et le profil de cluster de l'étape 5 (pour
+    l'analyse d'erreur par profil), sans réintroduire de moyenne/domaine/dispersion
+    de l'étape E dans les features."""
+    early = build_early_profile(df_long)
+    safe_cols = [
+        "student_pseudo",
+        "niveau",
+        "classe",
+        "nb_matieres_suivies",
+        "moyenne_generale",
+        "split",
+    ]
+    identity = profile_labeled[safe_cols]
+    dataset = identity.merge(early, on="student_pseudo", how="left")
+    if clusters is not None:
+        dataset = dataset.merge(
+            clusters[["student_pseudo", "cluster_label"]], on="student_pseudo", how="left"
+        )
     return dataset
