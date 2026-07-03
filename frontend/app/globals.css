@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+:root {
+  /* Palette institutionnelle sobre — gris ardoise, un seul accent. Pas de mode
+     sombre pour l'instant : outil de travail interne, pas une app publique. */
+  --background: #f7f8fa;
+  --surface: #ffffff;
+  --foreground: #1c2128;
+  --muted-foreground: #5b6472;
+  --border: #e2e5ea;
+  --border-strong: #cbd0d8;
+
+  --accent: #3b5bdb;
+  --accent-foreground: #ffffff;
+
+  --danger: #c0362c;
+  --danger-bg: #fbeceb;
+  --warning: #9a6300;
+  --warning-bg: #fdf3df;
+  --success: #256d3b;
+  --success-bg: #eaf5ee;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --font-sans: var(--font-inter);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+table {
+  font-variant-numeric: tabular-nums;
+}
