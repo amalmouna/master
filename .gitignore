@@ -5,5 +5,7 @@ data/artifacts/
 .env.local
 __pycache__/
 *.pyc
+tests/.tmp/
+.pytest_cache/
 node_modules/
 .next/
