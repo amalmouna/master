@@ -113,7 +113,6 @@ def build_students_payload(dataset_id: str) -> tuple[list[dict], dict[str, str]]
     out["id"] = out["student_pseudo"].map(pseudo_to_id)
     out["dataset_id"] = dataset_id
     out["a_risque"] = out["a_risque"].astype(bool)
-    out = out.drop(columns=["student_pseudo"])
     return records_json_safe(out), pseudo_to_id
 
 

@@ -22,7 +22,13 @@ class SupabaseRestClient:
                 f"{SUPABASE_SERVICE_ROLE_KEY_ENV} doivent être définies (jamais codées en dur). "
                 f"Voir .env.example."
             )
-        self.url = url.rstrip("/")
+        # Normalise : accepte l'URL de base ("https://x.supabase.co") ou une URL
+        # incluant déjà "/rest/v1" (copiée depuis certains écrans du dashboard
+        # Supabase) sans jamais doubler le segment de chemin.
+        base = url.rstrip("/")
+        if base.endswith("/rest/v1"):
+            base = base[: -len("/rest/v1")]
+        self.url = base
         self._session = requests.Session()
         self._session.headers.update(
             {
@@ -68,7 +74,7 @@ class SupabaseRestClient:
         """Compte les lignes visibles (via le header Content-Range PostgREST),
         filtrées par ex. {'dataset_id': 'eq.<uuid>'}."""
         endpoint = f"{self.url}/rest/v1/{table}"
-        params = {"select": "id"}
+        params = {"select": "*"}  # "id" n'existe pas sur toutes les tables (ex. subjects, clé "code")
         if filters:
             params.update(filters)
         resp = self._session.get(
