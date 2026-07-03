@@ -1,0 +1,9 @@
+data/raw/
+data/processed/
+data/artifacts/
+.env
+.env.local
+__pycache__/
+*.pyc
+node_modules/
+.next/
