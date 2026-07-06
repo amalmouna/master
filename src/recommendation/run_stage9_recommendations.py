@@ -17,12 +17,20 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from recommendation.rules import DOMAINS, MATIERES_FR, SEUIL_DIFFICULTE, SEUIL_SEVERE, generate_recommendations
+from recommendation.rules import (
+    MATIERES_FR,
+    SEUIL_DIFFICULTE,
+    SEUIL_SEVERE,
+    compute_domain_trends,
+    generate_recommendations,
+    per_niveau_dispersion_seuil,
+)
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 ARTIFACTS_DIR = "data/artifacts"
+MODELS_DIR = os.path.join(ARTIFACTS_DIR, "models")
 PROFILE_PATH = os.path.join(ARTIFACTS_DIR, "student_profile_labeled.csv")
 CLUSTERS_PATH = os.path.join(ARTIFACTS_DIR, "clusters.csv")
 EXPLANATIONS_PATH = os.path.join(ARTIFACTS_DIR, "explanations_students.csv")
@@ -30,25 +38,9 @@ AGGREGATES_PATH = os.path.join(ARTIFACTS_DIR, "notes_long_with_aggregates.csv")
 REC_CSV_PATH = os.path.join(ARTIFACTS_DIR, "recommendations.csv")
 REC_JSON_PATH = os.path.join(ARTIFACTS_DIR, "recommendations_by_student.json")
 SIGNALS_PATH = os.path.join(ARTIFACTS_DIR, "school_level_signals.json")
+THRESHOLDS_PATH = os.path.join(MODELS_DIR, "recommendation_thresholds.json")
 
-MATIERE_TO_DOMAIN = {m: d for d, ms in DOMAINS.items() for m in ms}
 SIGNAL_ETABLISSEMENT_SEUIL = 0.5  # >50% d'élèves sous 10 dans une matière = signal établissement
-
-
-def compute_domain_trends(aggregates: pd.DataFrame) -> dict:
-    """Par élève et par domaine : moyenne des pentes intra-semestre (tendance_matiere)
-    sur les matières suivies du domaine. NaN si aucune pente disponible."""
-    df = aggregates.copy()
-    df["domaine"] = df["matiere"].map(MATIERE_TO_DOMAIN)
-    grouped = df.groupby(["student_pseudo", "domaine"])["tendance_matiere"].mean()
-    trends = {}
-    for (pseudo, domaine), val in grouped.items():
-        trends.setdefault(pseudo, {})[domaine] = val
-    return trends
-
-
-def per_niveau_dispersion_seuil(profile: pd.DataFrame) -> dict:
-    return profile.groupby("niveau")["dispersion_intermatiere"].quantile(0.75).to_dict()
 
 
 def build_school_signals(profile: pd.DataFrame) -> dict:
@@ -105,6 +97,14 @@ def run() -> tuple[pd.DataFrame, dict]:
 
     domain_trends = compute_domain_trends(aggregates)
     dispersion_seuils = per_niveau_dispersion_seuil(profile)
+
+    # Persisté pour le score-only (score_import.py) : un nouvel import peut être
+    # un petit lot (une classe, quelques élèves transférés) pour lequel un
+    # centile de dispersion recalculé serait statistiquement instable. On
+    # réutilise le seuil calibré sur la population d'entraînement complète.
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    with open(THRESHOLDS_PATH, "w", encoding="utf-8") as f:
+        json.dump(dispersion_seuils, f, ensure_ascii=False, indent=2)
 
     rec_rows = []
     by_student = {}

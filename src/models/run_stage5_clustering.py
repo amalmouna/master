@@ -11,6 +11,7 @@ import json
 import os
 import sys
 
+import joblib
 import pandas as pd
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -21,17 +22,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from models.clustering import run_clustering
 
 ARTIFACTS_DIR = "data/artifacts"
+MODELS_DIR = os.path.join(ARTIFACTS_DIR, "models")
 INPUT_PATH = os.path.join(ARTIFACTS_DIR, "student_profile_labeled.csv")
 OUTPUT_PATH = os.path.join(ARTIFACTS_DIR, "clusters.csv")
 REPORT_PATH = os.path.join(ARTIFACTS_DIR, "clustering_report.json")
 
 
 def run() -> tuple[pd.DataFrame, dict]:
+    os.makedirs(MODELS_DIR, exist_ok=True)
     df = pd.read_csv(INPUT_PATH)
-    assignments, report = run_clustering(df)
+    assignments, report, models_by_niveau = run_clustering(df)
     assignments.to_csv(OUTPUT_PATH, index=False, encoding="utf-8-sig")
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2, default=str)
+
+    # Persistés pour l'affectation de nouveaux élèves sans réentraînement
+    # (score_import.py) : scaler + centroïdes + PCA déjà ajustés par niveau.
+    for niveau, bundle in models_by_niveau.items():
+        joblib.dump(bundle, os.path.join(MODELS_DIR, f"clustering_{niveau}.joblib"))
+
     return assignments, report
 
 

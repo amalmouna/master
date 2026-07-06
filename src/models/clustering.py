@@ -130,10 +130,19 @@ def cluster_niveau(df_niveau: pd.DataFrame, feature_cols: list[str]) -> dict:
     pca = PCA(n_components=2, random_state=RANDOM_STATE)
     coords = pca.fit_transform(X)
 
+    # Centroïdes = moyenne des points (espace standardisé) par cluster final.
+    # Identique par construction à KMeans.cluster_centers_ pour l'algo kmeans
+    # (c'est la définition même de l'objectif k-means à convergence) ; c'est
+    # aussi le mécanisme de repli standard pour affecter un nouveau point à un
+    # clustering agglomératif, qui n'a pas de .predict(). Un seul mécanisme
+    # pour les deux algos, pas de branche spéciale par algo (cf. score_import.py).
+    cluster_ids = sorted(set(labels))
+    centroids = np.array([X[labels == cid].mean(axis=0) for cid in cluster_ids])
+
     pop_mean = df_niveau[feature_cols].mean()
     pop_std = df_niveau[feature_cols].std(ddof=0)
     cluster_names = {}
-    for cid in sorted(set(labels)):
+    for cid in cluster_ids:
         mask = labels == cid
         cmeans = df_niveau.loc[mask, feature_cols].mean()
         cluster_names[int(cid)] = name_cluster(cmeans, pop_mean, pop_std, feature_cols)
@@ -150,12 +159,17 @@ def cluster_niveau(df_niveau: pd.DataFrame, feature_cols: list[str]) -> dict:
         "candidates_evaluated": [
             {k: v for k, v in c.items() if k != "labels"} for c in candidates
         ],
+        "scaler": scaler,
+        "pca_model": pca,
+        "centroids": centroids,
+        "cluster_ids": cluster_ids,
     }
 
 
-def run_clustering(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+def run_clustering(df: pd.DataFrame) -> tuple[pd.DataFrame, dict, dict]:
     assignments = []
     report = {}
+    models_by_niveau = {}
     for niveau, feature_cols in FEATURES_BY_NIVEAU.items():
         df_niveau = df[df["niveau"] == niveau].dropna(subset=feature_cols).reset_index(drop=True)
         n_excluded = (df["niveau"] == niveau).sum() - len(df_niveau)
@@ -183,4 +197,49 @@ def run_clustering(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             "variance_expliquee_pca_2d": result["pca_explained_variance_ratio"],
             "candidats_evalues": result["candidates_evaluated"],
         }
-    return pd.DataFrame(assignments), report
+        # Bundle persistable pour l'affectation de nouveaux élèves sans
+        # réentraînement (cf. src/score_import.py) : scaler + centroïdes +
+        # PCA déjà ajustés, plus la table cluster_id -> nom déjà calculée
+        # (recalculer les noms sur un nouvel import, potentiellement petit,
+        # donnerait des z-scores instables par rapport à une population
+        # d'entraînement de référence).
+        models_by_niveau[niveau] = {
+            "feature_cols": feature_cols,
+            "scaler": result["scaler"],
+            "pca": result["pca_model"],
+            "centroids": result["centroids"],
+            "cluster_ids": result["cluster_ids"],
+            "cluster_names": result["cluster_names"],
+            "algo": result["algo"],
+            "k": result["k"],
+        }
+    return pd.DataFrame(assignments), report, models_by_niveau
+
+
+def assign_to_nearest_centroid(bundle: dict, df_niveau: pd.DataFrame) -> pd.DataFrame:
+    """Affecte de nouveaux élèves (score-only, aucun réentraînement) aux clusters
+    d'un bundle persisté (cf. run_clustering). Même mécanisme pour kmeans et
+    agglomerative : plus proche centroïde dans l'espace standardisé du modèle
+    d'origine — exact pour kmeans (équivalent à .predict()), seul choix
+    possible pour agglomerative (pas de .predict()). df_niveau doit déjà être
+    filtré sur le niveau du bundle et ne contenir aucune valeur manquante sur
+    feature_cols (cf. score_import.py pour la gestion des exclusions)."""
+    feature_cols = bundle["feature_cols"]
+    X_raw = df_niveau[feature_cols].to_numpy(dtype=float)
+    X = bundle["scaler"].transform(X_raw)
+
+    centroids = bundle["centroids"]
+    cluster_ids = bundle["cluster_ids"]
+    # distance euclidienne à chaque centroïde -> indice du plus proche
+    dists = np.linalg.norm(X[:, None, :] - centroids[None, :, :], axis=2)
+    nearest_idx = dists.argmin(axis=1)
+
+    coords = bundle["pca"].transform(X)
+
+    out = df_niveau[["student_pseudo"]].copy()
+    out["niveau"] = df_niveau["niveau"].values
+    out["cluster_id"] = [cluster_ids[i] for i in nearest_idx]
+    out["cluster_label"] = [bundle["cluster_names"][cluster_ids[i]] for i in nearest_idx]
+    out["pca_1"] = coords[:, 0]
+    out["pca_2"] = coords[:, 1]
+    return out

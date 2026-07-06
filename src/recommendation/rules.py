@@ -244,3 +244,24 @@ def generate_recommendations(row: pd.Series, dispersion_seuil: float, trends: di
         recs.append(r)
     recs.sort(key=lambda x: x["priorite"])
     return recs
+
+
+MATIERE_TO_DOMAIN = {m: d for d, ms in DOMAINS.items() for m in ms}
+
+
+def compute_domain_trends(aggregates: pd.DataFrame) -> dict:
+    """Par élève et par domaine : moyenne des pentes intra-semestre
+    (tendance_matiere) sur les matières suivies du domaine. NaN si aucune
+    pente disponible. Partagé entre l'étape 9 (entraînement) et le score-only
+    (score_import.py) : même logique, jamais dupliquée."""
+    df = aggregates.copy()
+    df["domaine"] = df["matiere"].map(MATIERE_TO_DOMAIN)
+    grouped = df.groupby(["student_pseudo", "domaine"])["tendance_matiere"].mean()
+    trends: dict = {}
+    for (pseudo, domaine), val in grouped.items():
+        trends.setdefault(pseudo, {})[domaine] = val
+    return trends
+
+
+def per_niveau_dispersion_seuil(profile: pd.DataFrame) -> dict:
+    return profile.groupby("niveau")["dispersion_intermatiere"].quantile(0.75).to_dict()
