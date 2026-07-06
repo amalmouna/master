@@ -1,4 +1,4 @@
-import { supabase } from "./client";
+import { createSupabaseServerClient } from "./server";
 import { fetchAllRows } from "./fetchAll";
 import type { Dataset, Subject, Grade, Student, ClusterRow, Prediction, RecommendationRow } from "./types";
 
@@ -7,6 +7,7 @@ const SEUIL_SIGNAL_ETABLISSEMENT = 50; // % d'élèves sous 10/20 dans une mati�
 export interface StudentJoined {
   id: string;
   student_pseudo: string;
+  nom_complet: string | null;
   niveau: string;
   classe: string;
   a_risque: boolean;
@@ -19,6 +20,7 @@ export interface StudentJoined {
  * retour paginé par table) — base commune pour toutes les pages filtrables
  * par niveau/classe/profil. Évite de refaire une jointure PostgREST par page. */
 export async function getStudentsJoined(datasetId: string): Promise<StudentJoined[]> {
+  const supabase = await createSupabaseServerClient();
   const [students, clusters] = await Promise.all([
     fetchAllRows<Student>((from, to) =>
       supabase.from("students").select("*").eq("dataset_id", datasetId).range(from, to)
@@ -37,6 +39,7 @@ export async function getStudentsJoined(datasetId: string): Promise<StudentJoine
   return students.map((s) => ({
     id: s.id,
     student_pseudo: s.student_pseudo,
+    nom_complet: s.nom_complet,
     niveau: s.niveau,
     classe: s.classe,
     a_risque: s.a_risque,
@@ -52,10 +55,10 @@ export interface StudentFilters {
   profil?: string;
 }
 
-export function applyStudentFilters(
-  students: StudentJoined[],
+export function applyStudentFilters<T extends StudentJoined>(
+  students: T[],
   filters: StudentFilters
-): StudentJoined[] {
+): T[] {
   return students.filter(
     (s) =>
       (!filters.niveau || s.niveau === filters.niveau) &&
@@ -92,6 +95,7 @@ export function getFilterOptions(students: StudentJoined[]): FilterOptions {
 
 /** Dernier import chargé (§2.8 — historisation, un dataset = un semestre). */
 export async function getLatestDataset(): Promise<Dataset | null> {
+  const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("datasets")
     .select("*")
@@ -122,6 +126,7 @@ export interface RiskSummary {
  * dataset (agrégation en mémoire : ~500 lignes, largement dans le budget d'un
  * rendu serveur — pas besoin de RPC/vue dédiée à ce volume). */
 export async function getRiskSummary(datasetId: string): Promise<RiskSummary> {
+  const supabase = await createSupabaseServerClient();
   const students = await fetchAllRows<Pick<Student, "niveau" | "a_risque" | "moyenne_generale">>(
     (from, to) =>
       supabase
@@ -184,6 +189,7 @@ export async function getSubjectSignals(
   datasetId: string,
   studentIds?: Set<string>
 ): Promise<SubjectSignal[]> {
+  const supabase = await createSupabaseServerClient();
   const { data: subjectsData, error: subjectsError } = await supabase.from("subjects").select("*");
   if (subjectsError) throw new Error(`getSubjectSignals (subjects): ${subjectsError.message}`);
   const subjects = (subjectsData ?? []) as Subject[];
@@ -253,6 +259,7 @@ export type PredictionSummary = Pick<
 
 /** Sorties des modèles retenus (Logistic Regression, Ridge), indexées par élève. */
 export async function getPredictionsByStudent(datasetId: string): Promise<Map<string, PredictionSummary>> {
+  const supabase = await createSupabaseServerClient();
   const predictions = await fetchAllRows<
     Pick<
       Prediction,
@@ -291,6 +298,7 @@ export interface ClusterPoint {
  * (moyenne_generale, dispersion, taux de risque), pas les features exactes
  * du modèle. */
 export async function getClusterPoints(datasetId: string): Promise<ClusterPoint[]> {
+  const supabase = await createSupabaseServerClient();
   const [clusters, students] = await Promise.all([
     fetchAllRows<Pick<ClusterRow, "student_id" | "cluster_label" | "pca_1" | "pca_2">>((from, to) =>
       supabase
@@ -384,6 +392,7 @@ export interface StudentDetail {
 /** Fiche élève complète. Un seul élève scopé par dataset+pseudo (pas de
  * pagination nécessaire : au plus 7 notes et quelques recommandations). */
 export async function getStudentDetail(datasetId: string, pseudo: string): Promise<StudentDetail | null> {
+  const supabase = await createSupabaseServerClient();
   const { data: studentData, error: studentError } = await supabase
     .from("students")
     .select("*")

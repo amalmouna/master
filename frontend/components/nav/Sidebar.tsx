@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, BarChart3, AlertTriangle, Boxes } from "lucide-react";
+import { LayoutDashboard, BarChart3, AlertTriangle, Boxes, LogOut } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Vue d'ensemble", icon: LayoutDashboard },
@@ -11,7 +11,7 @@ const NAV_ITEMS = [
   { href: "/profils", label: "Profils", icon: Boxes },
 ];
 
-export function Sidebar() {
+export function Sidebar({ userEmail }: { userEmail: string }) {
   const pathname = usePathname();
 
   return (
@@ -40,6 +40,20 @@ export function Sidebar() {
           );
         })}
       </nav>
+      <div className="border-t border-border px-3 py-3">
+        <p className="truncate px-1 text-xs text-muted-foreground" title={userEmail}>
+          {userEmail}
+        </p>
+        <form action="/auth/signout" method="post">
+          <button
+            type="submit"
+            className="mt-2 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-background hover:text-foreground"
+          >
+            <LogOut size={14} strokeWidth={2} />
+            Se déconnecter
+          </button>
+        </form>
+      </div>
     </aside>
   );
 }

@@ -46,7 +46,7 @@ export default async function FicheElevePage({
       </Link>
 
       <div className="mt-3 flex items-baseline justify-between">
-        <h1 className="text-lg font-semibold">Élève {student.student_pseudo.slice(0, 8)}</h1>
+        <h1 className="text-lg font-semibold">{student.nom_complet ?? `Élève ${student.student_pseudo.slice(0, 8)}`}</h1>
         <span
           className={`rounded px-2 py-0.5 text-xs font-medium ${
             student.a_risque ? "bg-danger-bg text-danger" : "bg-success-bg text-success"
@@ -58,7 +58,7 @@ export default async function FicheElevePage({
       <p className="mt-1 text-xs text-muted-foreground">
         {student.niveau} — {student.classe}
         {cluster_label && <> · Profil {cluster_label}</>}
-        {student.tranche_age && <> · {student.tranche_age} ans</>}
+        {student.age !== null && <> · {student.age} ans</>}
       </p>
 
       <div className="mt-6 grid grid-cols-4 gap-4">

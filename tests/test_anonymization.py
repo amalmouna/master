@@ -4,7 +4,14 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from anonymization.anonymize import anonymize_dataframe, assert_no_pii, dob_to_age, age_to_band, pseudonymize_code
+from anonymization.anonymize import (
+    anonymize_dataframe,
+    assert_no_pii,
+    build_identity_mapping,
+    dob_to_age,
+    age_to_band,
+    pseudonymize_code,
+)
 
 REFERENCE_DATE = date(2025, 9, 1)
 
@@ -109,3 +116,29 @@ def test_age_to_band_boundaries():
     assert age_to_band(16) == ">=16"
     assert age_to_band(20) == ">=16"
     assert age_to_band(None) is None
+
+
+def test_identity_mapping_contains_name_but_not_national_id(local_tmp_path):
+    """La table d'identité (usage exclusif : loader Supabase authentifié) porte
+    le nom réel, mais jamais le code national ni l'id interne Massar — le hash
+    stable (student_pseudo) suffit à faire le lien avec le reste du pipeline."""
+    df = _raw_long_df()
+    salt_file = str(local_tmp_path / ".salt")
+    mapping = build_identity_mapping(df, REFERENCE_DATE, salt_file=salt_file)
+
+    assert set(mapping.columns) == {"student_pseudo", "nom_complet", "age", "niveau"}
+    assert set(mapping["nom_complet"]) == {"الشافعي أيمن", "عرنوسي أميمة"}
+    assert len(mapping) == 2  # une ligne par élève, dédupliquée
+
+
+def test_identity_mapping_pseudo_matches_anonymize_dataframe(local_tmp_path):
+    """Même sel, même élève -> même student_pseudo des deux côtés : la table
+    d'identité doit pouvoir se joindre exactement sur la table longue
+    pseudonymisée sans divergence de hash."""
+    df = _raw_long_df()
+    salt_file = str(local_tmp_path / ".salt")
+
+    long_pseudo = anonymize_dataframe(df, REFERENCE_DATE, salt_file=salt_file)
+    mapping = build_identity_mapping(df, REFERENCE_DATE, salt_file=salt_file)
+
+    assert set(mapping["student_pseudo"]) == set(long_pseudo["student_pseudo"])

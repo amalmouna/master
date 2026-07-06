@@ -89,7 +89,7 @@ export default async function RisquePage({
                     href={`/eleves/${s.student_pseudo}`}
                     className="font-medium text-accent hover:underline"
                   >
-                    {s.student_pseudo.slice(0, 8)}
+                    {s.nom_complet ?? s.student_pseudo.slice(0, 8)}
                   </Link>
                 </td>
                 <td className="px-4 py-2 text-muted-foreground">{s.niveau}</td>

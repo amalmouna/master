@@ -106,3 +106,31 @@ def assert_no_pii(df: pd.DataFrame) -> None:
     leaked = forbidden & set(df.columns)
     if leaked:
         raise ValueError(f"Colonnes PII résiduelles détectées après anonymisation : {leaked}")
+
+
+def build_identity_mapping(
+    df: pd.DataFrame, reference_date: date, salt_file: str = SALT_FILE_DEFAULT
+) -> pd.DataFrame:
+    """Table d'identité SÉPARÉE, à usage exclusif de la couche de persistance
+    (chargement Supabase authentifié) — jamais consommée par les étapes D-9
+    (agrégats, modèles, clustering), qui continuent de fonctionner sur la
+    table longue pseudonymisée sans nom, exactement comme avant.
+
+    Contient : student_pseudo (clé stable, même hash que la table longue),
+    nom_complet (nom réel), age (entier, calculé au 1er septembre), niveau.
+    Ne contient PAS le code national (student_code) ni l'id interne Massar :
+    le hash suffit à faire le lien avec le reste du pipeline, et le national
+    ID n'a aucune valeur d'affichage pour l'administration.
+
+    ATTENTION : le fichier produit par cette fonction contient des données
+    nominatives réelles. Il doit rester local (data/artifacts/, gitignored)
+    et n'être lu que par le loader Supabase, jamais committé ni journalisé."""
+    salt = get_or_create_salt(salt_file)
+    out = df.copy()
+    out["student_pseudo"] = out["student_code"].apply(lambda c: pseudonymize_code(c, salt))
+    out["age"] = out["dob_raw"].apply(lambda d: dob_to_age(d, reference_date))
+
+    mapping = out[["student_pseudo", "nom_complet", "age", "niveau"]].drop_duplicates(
+        subset="student_pseudo", keep="first"
+    )
+    return mapping.reset_index(drop=True)

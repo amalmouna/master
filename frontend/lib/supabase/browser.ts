@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -11,8 +11,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-// Client public, lecture seule (RLS "lecture_publique" sur toutes les tables
-// scolaires). Pas de session à persister : aucune authentification pour l'instant.
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: { persistSession: false },
-});
+/** Client Supabase navigateur (page de connexion uniquement) — clé anon,
+ * session gérée via cookies pour rester synchronisée avec le serveur
+ * (Server Components, proxy). */
+export function createSupabaseBrowserClient() {
+  return createBrowserClient(supabaseUrl!, supabaseAnonKey!);
+}

@@ -1,19 +1,85 @@
--- Étape 10 — schéma Supabase minimal, données pseudonymisées uniquement.
+-- Étape 10 — schéma Supabase, architecture privée/authentifiée.
 --
--- Portée : couche de données seulement (pas de front-end, pas d'auth utilisateur
--- pour l'instant — une table `profiles` liée à Supabase Auth sera ajoutée quand
--- la gestion multi-utilisateurs sera nécessaire). Aucune colonne de ce schéma ne
--- doit jamais recevoir de donnée nominative : student_pseudo est la seule clé
--- élève, jamais student_code/nom/id_interne (cf. src/anonymization/anonymize.py).
+-- CHANGEMENT DE POLITIQUE (voir docs/AUTH_SETUP.md pour le contexte complet) :
+-- ce schéma contient désormais le NOM RÉEL des élèves (colonne
+-- students.nom_complet) et leur âge exact. C'est une dérogation explicite et
+-- documentée à la règle par défaut du projet ("aucune donnée nominative ne
+-- doit exister au-delà de l'anonymisation"), décidée par le porteur du
+-- projet en échange d'un verrouillage strict de l'accès : plus aucune
+-- lecture anonyme n'est autorisée (RLS admin-only ci-dessous), et le code
+-- national (student_code) reste hors base dans tous les cas — seul le hash
+-- stable (student_pseudo) sert de clé technique. Le pipeline Python (étapes
+-- D-9 : agrégats, modèles, clustering, recommandations) continue de
+-- fonctionner exclusivement sur les données pseudonymisées SANS nom ; seule
+-- la couche de persistance (ce schéma + le loader) reçoit l'identité réelle,
+-- au moment du chargement, via src/anonymization/anonymize.py::build_identity_mapping.
 --
--- RLS : activé sur toutes les tables scolaires. Politique de lecture ouverte
--- (anon + authenticated) car les données sont déjà pseudonymisées — aucune fuite
--- possible via une lecture publique. Aucune politique d'écriture pour anon/
--- authenticated : seul le rôle service_role (qui contourne RLS nativement côté
--- Supabase) peut écrire, via le loader Python et sa clé hors dépôt. À resserrer
--- (politiques par établissement/rôle) si l'outil devient multi-établissement.
+-- RLS : lecture réservée aux utilisateurs authentifiés listés dans `admins`
+-- (voir la fonction is_admin() plus bas). Aucune table scolaire n'est
+-- lisible par le rôle anon. Écriture réservée à service_role (loader Python),
+-- qui contourne RLS nativement côté Supabase — jamais utilisé côté frontend.
 
 create extension if not exists pgcrypto;
+
+-- ---------------------------------------------------------------------------
+-- Administration des accès (Supabase Auth)
+-- ---------------------------------------------------------------------------
+
+-- Allowlist des emails autorisés à devenir administrateur. À remplir avec les
+-- vraies adresses de l'administration (cf. docs/AUTH_SETUP.md) :
+--   insert into admin_allowlist (email) values ('directeur@exemple.ma');
+create table if not exists admin_allowlist (
+    email text primary key
+);
+
+-- Comptes administrateurs effectifs, liés à auth.users. Rempli automatiquement
+-- par le trigger ci-dessous quand un compte Supabase Auth est créé (via
+-- invitation dashboard, jamais via inscription publique — désactivée) avec un
+-- email présent dans admin_allowlist. Un compte créé avec un email absent de
+-- la liste n'obtient AUCUN accès (pas de ligne ici -> is_admin() = false).
+create table if not exists admins (
+    id uuid primary key references auth.users(id) on delete cascade,
+    email text not null,
+    created_at timestamptz not null default now()
+);
+
+create or replace function handle_new_admin_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if exists (select 1 from admin_allowlist where email = new.email) then
+    insert into admins (id, email) values (new.id, new.email)
+    on conflict (id) do nothing;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function handle_new_admin_user();
+
+-- Fonction utilisée par toutes les politiques RLS ci-dessous. security definer
+-- pour pouvoir lire `admins` même si son propre RLS interdit la lecture directe.
+create or replace function is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (select 1 from admins where id = auth.uid());
+$$;
+
+alter table admin_allowlist enable row level security;
+alter table admins enable row level security;
+-- Aucune politique select/insert/update/delete pour anon/authenticated sur ces
+-- deux tables : accès exclusivement via service_role (dashboard/SQL editor)
+-- ou via is_admin(), qui contourne RLS grâce à security definer.
 
 -- ---------------------------------------------------------------------------
 -- datasets : un import = un semestre. Traçabilité (§2.8).
@@ -45,15 +111,17 @@ create table if not exists subjects (
 );
 
 -- ---------------------------------------------------------------------------
--- students : un élève pseudonymisé par dataset (mono-semestre, cf. §1.1).
+-- students : un élève par dataset (mono-semestre, cf. §1.1). Identité réelle
+-- (voir bandeau en tête de fichier) — accès verrouillé par RLS admin-only.
 -- ---------------------------------------------------------------------------
 create table if not exists students (
     id uuid primary key,
     dataset_id uuid not null references datasets(id) on delete cascade,
-    student_pseudo text not null,       -- hash HMAC tronqué, jamais réversible ici
+    student_pseudo text not null,       -- hash HMAC stable — clé technique, jamais le code national
+    nom_complet text,                   -- nom réel (dérogation documentée ci-dessus)
+    age int,                            -- âge exact au 1er septembre, jamais la date de naissance
     niveau text not null,
     classe text not null,
-    tranche_age text,
     nb_matieres_suivies int,
     moyenne_generale numeric,
     dispersion_intermatiere numeric,
@@ -161,7 +229,7 @@ create index if not exists idx_recommendations_dataset on recommendations(datase
 create index if not exists idx_recommendations_priorite on recommendations(priorite);
 
 -- ---------------------------------------------------------------------------
--- Row Level Security
+-- Row Level Security — tables scolaires
 -- ---------------------------------------------------------------------------
 alter table datasets enable row level security;
 alter table subjects enable row level security;
@@ -172,14 +240,14 @@ alter table clusters enable row level security;
 alter table predictions enable row level security;
 alter table recommendations enable row level security;
 
--- Lecture ouverte (anon + authenticated) : données déjà pseudonymisées, aucune
--- fuite possible. Aucune politique d'écriture pour ces rôles ; seul service_role
--- (loader Python) écrit, en contournant RLS nativement.
-create policy "lecture_publique" on datasets for select using (true);
-create policy "lecture_publique" on subjects for select using (true);
-create policy "lecture_publique" on students for select using (true);
-create policy "lecture_publique" on grades for select using (true);
-create policy "lecture_publique" on model_runs for select using (true);
-create policy "lecture_publique" on clusters for select using (true);
-create policy "lecture_publique" on predictions for select using (true);
-create policy "lecture_publique" on recommendations for select using (true);
+-- Lecture réservée aux administrateurs authentifiés (is_admin()). anon exclu
+-- explicitement : aucune policy ne le mentionne, et RLS est fail-closed par
+-- défaut (aucune ligne visible sans policy correspondante).
+create policy "lecture_admin" on datasets for select using (is_admin());
+create policy "lecture_admin" on subjects for select using (is_admin());
+create policy "lecture_admin" on students for select using (is_admin());
+create policy "lecture_admin" on grades for select using (is_admin());
+create policy "lecture_admin" on model_runs for select using (is_admin());
+create policy "lecture_admin" on clusters for select using (is_admin());
+create policy "lecture_admin" on predictions for select using (is_admin());
+create policy "lecture_admin" on recommendations for select using (is_admin());

@@ -56,10 +56,11 @@ export interface Subject {
 export interface Student {
   id: string;
   dataset_id: string;
-  student_pseudo: string;
+  student_pseudo: string; // hash stable — clé technique, jamais le code national
+  nom_complet: string | null; // nom réel (architecture privée/authentifiée, cf. supabase/schema.sql)
+  age: number | null;
   niveau: string;
   classe: string;
-  tranche_age: string | null;
   nb_matieres_suivies: number | null;
   moyenne_generale: number | null;
   dispersion_intermatiere: number | null;

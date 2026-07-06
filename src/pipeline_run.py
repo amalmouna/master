@@ -16,7 +16,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from anonymization.anonymize import anonymize_dataframe, assert_no_pii
+from anonymization.anonymize import anonymize_dataframe, assert_no_pii, build_identity_mapping
 from cleaning.clean import (
     apply_bounds_check,
     build_coverage_matrix,
@@ -78,6 +78,13 @@ def run(raw_dir: str, processed_dir: str, artifacts_dir: str) -> dict:
     pseudo_path = os.path.join(artifacts_dir, "notes_long_pseudo.csv")
     df_pseudo.to_csv(pseudo_path, index=False, encoding="utf-8-sig")
 
+    # ATTENTION : contient des noms réels. Fichier séparé, local, gitignored,
+    # consommé UNIQUEMENT par le loader Supabase (architecture authentifiée) —
+    # jamais par les étapes D-9, qui restent sur la table pseudonymisée ci-dessus.
+    identity_mapping = build_identity_mapping(df, REFERENCE_DATE)
+    identity_path = os.path.join(artifacts_dir, "identity_mapping.csv")
+    identity_mapping.to_csv(identity_path, index=False, encoding="utf-8-sig")
+
     coverage_path = os.path.join(artifacts_dir, "coverage_matrix.csv")
     coverage.to_csv(coverage_path, index=False, encoding="utf-8-sig")
 
@@ -126,6 +133,7 @@ def run(raw_dir: str, processed_dir: str, artifacts_dir: str) -> dict:
     quality_report["_paths"] = {
         "clean": df_clean_path,
         "pseudo": pseudo_path,
+        "identity_mapping_CONTAINS_PII": identity_path,
         "coverage": coverage_path,
         "report": report_path,
     }

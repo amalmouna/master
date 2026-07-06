@@ -96,12 +96,19 @@ def build_dataset_payload(dataset_id: str, label: str, annee_scolaire: str, seme
 
 
 def build_students_payload(dataset_id: str) -> tuple[list[dict], dict[str, str]]:
+    """Architecture privée/authentifiée (voir schema.sql) : joint le nom réel
+    et l'âge exact depuis identity_mapping.csv — un artefact SÉPARÉ, produit
+    uniquement pour cette étape de persistance, jamais consommé par les
+    étapes D-9 (qui restent pseudonymisées sans nom). Le code national ne
+    transite jamais ici : la jointure se fait sur student_pseudo (hash),
+    identique des deux côtés (garanti par construction, cf. build_identity_mapping)."""
     profile = _load_csv("student_profile_labeled.csv")
+    identity = _load_csv("identity_mapping.csv")[["student_pseudo", "nom_complet", "age"]]
+
     pseudo_to_id = {p: str(uuid.uuid4()) for p in profile["student_pseudo"]}
     cols = [
         "niveau",
         "classe",
-        "tranche_age",
         "nb_matieres_suivies",
         "moyenne_generale",
         "dispersion_intermatiere",
@@ -109,10 +116,20 @@ def build_students_payload(dataset_id: str) -> tuple[list[dict], dict[str, str]]
         "a_risque",
         "remarque_encodee",
     ]
-    out = profile[["student_pseudo"] + cols].copy()
+    out = profile[["student_pseudo"] + cols].merge(identity, on="student_pseudo", how="left")
+    missing_identity = out["nom_complet"].isna().sum()
+    if missing_identity:
+        raise RuntimeError(
+            f"{missing_identity} élève(s) sans correspondance dans identity_mapping.csv — "
+            "le loader ne doit jamais insérer un élève sans nom faute de silencieusement "
+            "dégrader l'architecture identifiée en anonyme partiel."
+        )
+
     out["id"] = out["student_pseudo"].map(pseudo_to_id)
     out["dataset_id"] = dataset_id
     out["a_risque"] = out["a_risque"].astype(bool)
+    out["age"] = out["age"].astype("Int64")
+    out = out.drop(columns=["student_pseudo"])
     return records_json_safe(out), pseudo_to_id
 
 
