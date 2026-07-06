@@ -7,14 +7,6 @@ import {
   extractEtablissementSignals,
 } from "@/lib/supabase/queries";
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  });
-}
-
 export default async function OverviewPage() {
   const dataset = await getLatestDataset();
 
@@ -40,12 +32,7 @@ export default async function OverviewPage() {
 
   return (
     <div className="p-8 max-w-6xl">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-lg font-semibold">Vue d&apos;ensemble</h1>
-        <span className="text-xs text-muted-foreground">
-          {dataset.label} — importé le {formatDate(dataset.date_import)}
-        </span>
-      </div>
+      <h1 className="text-lg font-semibold">Vue d&apos;ensemble</h1>
 
       <div className="mt-6 grid grid-cols-4 gap-4">
         <StatCard icon={Users} label="Élèves" value={String(risk.n_eleves)} />

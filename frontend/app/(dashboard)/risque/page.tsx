@@ -16,9 +16,9 @@ interface AtRiskRow extends StudentJoined {
 export default async function RisquePage({
   searchParams,
 }: {
-  searchParams: Promise<{ niveau?: string; classe?: string; profil?: string }>;
+  searchParams: Promise<{ niveau?: string; classe?: string }>;
 }) {
-  const { niveau, classe, profil } = await searchParams;
+  const { niveau, classe } = await searchParams;
   const dataset = await getLatestDataset();
 
   if (!dataset) {
@@ -40,7 +40,7 @@ export default async function RisquePage({
     .filter((s) => s.a_risque)
     .map((s) => ({ ...s, probabilite_risque: predictions.get(s.id)?.probabilite_risque ?? null }));
 
-  const filtered = applyStudentFilters(atRisk, { niveau, classe, profil }).sort(
+  const filtered = applyStudentFilters(atRisk, { niveau, classe }).sort(
     (a, b) => (b.probabilite_risque ?? 0) - (a.probabilite_risque ?? 0)
   );
 
@@ -49,16 +49,17 @@ export default async function RisquePage({
       <div className="flex items-baseline justify-between">
         <h1 className="text-lg font-semibold">Élèves à risque</h1>
         <span className="text-xs text-muted-foreground">
-          {filtered.length} élève(s) à risque sur {applyStudentFilters(students, { niveau, classe, profil }).length} dans le périmètre
+          {filtered.length} élève(s) à risque sur {applyStudentFilters(students, { niveau, classe }).length} dans le périmètre
         </span>
       </div>
+      <p className="mt-1 text-xs text-muted-foreground">Élèves à risque uniquement.</p>
 
       <div className="mt-4">
         <FilterBar
           niveaux={options.niveaux}
           classesByNiveau={options.classesByNiveau}
           profils={options.profils}
-          enabled={{ niveau: true, classe: true, profil: true }}
+          enabled={{ niveau: true, classe: true, profil: false }}
         />
       </div>
 
