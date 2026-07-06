@@ -61,7 +61,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(__file__))
 
 from anonymization.anonymize import anonymize_dataframe, assert_no_pii, build_identity_mapping
-from cleaning.clean import apply_bounds_check, build_long_dataframe, detect_duplicates
+from cleaning.clean import apply_bounds_check, build_coverage_matrix, build_long_dataframe, detect_duplicates
 from features.aggregate import add_subject_aggregates
 from features.profile import build_student_profile
 from ingestion.discover import discover_xlsx
@@ -104,9 +104,10 @@ def _load_recommendation_thresholds(models_dir: str) -> dict:
     return {}
 
 
-def _ingest_and_clean(raw_dir: str) -> tuple[pd.DataFrame, list[dict], list[dict], list[dict]]:
+def _ingest_and_clean(raw_dir: str) -> tuple[pd.DataFrame, int, list[dict], list[dict], list[dict]]:
     """Étapes A+B : parse tous les .xlsx puis nettoie. Renvoie (table longue
-    nettoyée avec PII, fichiers en quarantaine, anomalies de bornes, doublons)."""
+    nettoyée avec PII, nb fichiers découverts, fichiers en quarantaine,
+    anomalies de bornes, doublons)."""
     files = discover_xlsx(raw_dir)
     parsed_ok, quarantined = [], []
     for f in files:
@@ -127,7 +128,7 @@ def _ingest_and_clean(raw_dir: str) -> tuple[pd.DataFrame, list[dict], list[dict
     df, bounds_anomalies = apply_bounds_check(df)
     df, duplicate_anomalies = detect_duplicates(df)
 
-    return df, quarantined, bounds_anomalies, duplicate_anomalies
+    return df, len(files), quarantined, bounds_anomalies, duplicate_anomalies
 
 
 def _score_risk_and_regression(profile: pd.DataFrame, df_agg: pd.DataFrame, models_dir: str) -> pd.DataFrame:
@@ -213,7 +214,7 @@ def run_import(raw_dir: str, academic_year: str, models_dir: str = MODELS_DIR) -
     reference_date = _reference_date(academic_year)
 
     # --- A + B : ingestion, nettoyage ---
-    df, quarantined, bounds_anomalies, duplicate_anomalies = _ingest_and_clean(raw_dir)
+    df, n_files_discovered, quarantined, bounds_anomalies, duplicate_anomalies = _ingest_and_clean(raw_dir)
 
     # --- C : anonymisation (sel partagé — cf. note de module) ---
     df_pseudo = anonymize_dataframe(df, reference_date)
@@ -222,6 +223,16 @@ def run_import(raw_dir: str, academic_year: str, models_dir: str = MODELS_DIR) -
 
     # --- D : agrégats par matière ---
     df_agg = add_subject_aggregates(df_pseudo)
+
+    # --- Couverture (classe x matière), même notion qu'à l'étape B du
+    # pipeline d'entraînement (data_quality_report.json) — calculée ici sur
+    # les colonnes niveau/classe/matiere, qui survivent intactes à
+    # l'anonymisation (seules les colonnes PII sont retirées).
+    all_niveaux = sorted(df_agg["niveau"].dropna().unique().tolist())
+    all_classes = sorted(df_agg["classe"].dropna().unique().tolist())
+    all_matieres = list(MATIERES_FR.keys())
+    coverage = build_coverage_matrix(df_agg, all_niveaux, all_classes, all_matieres)
+    coverage_counts = coverage["statut"].value_counts().to_dict()
 
     # --- E : profil élève (table large) ---
     profile, profile_issues = build_student_profile(df_agg)
@@ -247,7 +258,8 @@ def run_import(raw_dir: str, academic_year: str, models_dir: str = MODELS_DIR) -
     return {
         "academic_year": academic_year,
         "reference_date": reference_date.isoformat(),
-        "n_files_discovered": len(discover_xlsx(raw_dir)),
+        "n_files_discovered": n_files_discovered,
+        "n_files_parsed_ok": n_files_discovered - len(quarantined),
         "n_files_quarantined": len(quarantined),
         "n_students": len(profile),
         "n_a_risque_observe": int(profile["a_risque"].sum()),
@@ -259,12 +271,17 @@ def run_import(raw_dir: str, academic_year: str, models_dir: str = MODELS_DIR) -
         "n_anomalies_bornes": len(bounds_anomalies),
         "n_doublons": len(duplicate_anomalies),
         "profile_issues": profile_issues,
+        "coverage_counts": coverage_counts,
+        "niveaux": all_niveaux,
+        "classes": all_classes,
+        "matieres": all_matieres,
         # Données en mémoire pour un futur backend / tests — jamais écrites sur
         # disque par cette fonction.
         "profile": profile,
         "identity_mapping": identity_mapping,
         "notes_long_pseudo": df_pseudo,
         "notes_long_aggregated": df_agg,
+        "coverage": coverage,
         "recommendations": recommendations,
     }
 
@@ -280,6 +297,7 @@ def _print_summary(result: dict) -> None:
     print(f"Recommandations générées  : {result['n_recommendations']} (seuils dispersion : {result['dispersion_seuils_source']})")
     print(f"Anomalies notes hors bornes : {result['n_anomalies_bornes']}")
     print(f"Doublons élève/classe/matière : {result['n_doublons']}")
+    print(f"Couverture (classe x matière) : {result['coverage_counts']}")
     print("Exclusions clustering (valeurs manquantes/modèle absent) par niveau :")
     for niveau, n in result["cluster_exclusions"].items():
         print(f"  {niveau}: {n}")

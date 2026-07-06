@@ -14,6 +14,14 @@ rapport de qualité brut (data_quality_report.json) n'est PAS envoyé tel quel :
 il est généré à l'étape B, avant anonymisation, et ses listes détaillées
 d'anomalies/doublons peuvent contenir des student_code en clair. Seul un
 résumé filtré (compteurs, matrice de couverture) est persisté.
+
+Les fonctions build_*_payload ci-dessous sont pures (DataFrames/dicts en
+entrée, payload Supabase en sortie) — la lecture des artefacts sur disque est
+faite ici, dans run(), pas dans ces fonctions. C'est ce qui permet à
+push_scored_import.py (backend FastAPI, import score-only) de réutiliser les
+mêmes fonctions à partir des DataFrames déjà en mémoire renvoyés par
+score_import.run_import(), sans dupliquer la logique de construction des
+payloads.
 """
 from __future__ import annotations
 
@@ -77,33 +85,51 @@ def build_subjects_payload() -> list[dict]:
     ]
 
 
-def build_dataset_payload(dataset_id: str, label: str, annee_scolaire: str, semestre: str) -> dict:
-    quality = _load_json("data_quality_report.json")
-    quality_summary = {k: quality[k] for k in QUALITY_SUMMARY_ALLOWED_KEYS if k in quality}
-    risk_config = _load_json("risk_config.json")
+def build_dataset_payload(
+    dataset_id: str,
+    label: str,
+    annee_scolaire: str,
+    semestre: str,
+    quality_summary: dict,
+    risk_config: dict,
+    n_eleves: int,
+    n_enregistrements: int,
+) -> dict:
     return {
         "id": dataset_id,
         "label": label,
         "annee_scolaire": annee_scolaire,
         "semestre": semestre,
         "date_import": datetime.now(timezone.utc).isoformat(),
-        "n_eleves": quality.get("n_students_uniques"),
-        "n_enregistrements": quality.get("n_enregistrements"),
+        "n_eleves": n_eleves,
+        "n_enregistrements": n_enregistrements,
         "statut": "charge",
         "quality_summary": quality_summary,
         "risk_config": risk_config,
     }
 
 
-def build_students_payload(dataset_id: str) -> tuple[list[dict], dict[str, str]]:
+def build_students_payload(
+    dataset_id: str,
+    annee_scolaire: str,
+    profile: pd.DataFrame,
+    identity: pd.DataFrame,
+) -> tuple[list[dict], dict[str, str]]:
     """Architecture privée/authentifiée (voir schema.sql) : joint le nom réel
-    et l'âge exact depuis identity_mapping.csv — un artefact SÉPARÉ, produit
-    uniquement pour cette étape de persistance, jamais consommé par les
-    étapes D-9 (qui restent pseudonymisées sans nom). Le code national ne
+    et l'âge exact depuis `identity` (identity_mapping.csv ou
+    score_import.run_import()["identity_mapping]) — un artefact SÉPARÉ,
+    produit uniquement pour cette étape de persistance, jamais consommé par
+    les étapes D-9 (qui restent pseudonymisées sans nom). Le code national ne
     transite jamais ici : la jointure se fait sur student_pseudo (hash),
-    identique des deux côtés (garanti par construction, cf. build_identity_mapping)."""
-    profile = _load_csv("student_profile_labeled.csv")
-    identity = _load_csv("identity_mapping.csv")[["student_pseudo", "nom_complet", "age"]]
+    identique des deux côtés (garanti par construction, cf. build_identity_mapping).
+
+    `academic_year` (colonne students.academic_year, migration 004) est fixé
+    directement ici depuis annee_scolaire, pas déduit après coup côté base :
+    students.student_pseudo étant stable à travers les années (même sel), la
+    contrainte unique (student_pseudo, academic_year) empêche qu'un même élève
+    soit inséré deux fois pour la même année si ce script est relancé par
+    erreur sur le même import."""
+    identity = identity[["student_pseudo", "nom_complet", "age"]]
 
     pseudo_to_id = {p: str(uuid.uuid4()) for p in profile["student_pseudo"]}
     cols = [
@@ -120,20 +146,20 @@ def build_students_payload(dataset_id: str) -> tuple[list[dict], dict[str, str]]
     missing_identity = out["nom_complet"].isna().sum()
     if missing_identity:
         raise RuntimeError(
-            f"{missing_identity} élève(s) sans correspondance dans identity_mapping.csv — "
+            f"{missing_identity} élève(s) sans correspondance dans identity_mapping — "
             "le loader ne doit jamais insérer un élève sans nom faute de silencieusement "
             "dégrader l'architecture identifiée en anonyme partiel."
         )
 
     out["id"] = out["student_pseudo"].map(pseudo_to_id)
     out["dataset_id"] = dataset_id
+    out["academic_year"] = annee_scolaire
     out["a_risque"] = out["a_risque"].astype(bool)
     out["age"] = out["age"].astype("Int64")
     return records_json_safe(out), pseudo_to_id
 
 
-def build_grades_payload(dataset_id: str, pseudo_to_id: dict[str, str]) -> list[dict]:
-    long_df = _load_csv("notes_long_with_aggregates.csv")
+def build_grades_payload(dataset_id: str, pseudo_to_id: dict[str, str], long_df: pd.DataFrame) -> list[dict]:
     cols = [
         "c1", "c2", "c3", "c4", "activites",
         "c1_colonne_existe", "c2_colonne_existe", "c3_colonne_existe",
@@ -148,14 +174,15 @@ def build_grades_payload(dataset_id: str, pseudo_to_id: dict[str, str]) -> list[
     return records_json_safe(out)
 
 
-def build_model_runs_payload(dataset_id: str) -> dict[str, str]:
+def build_model_runs_payload(
+    dataset_id: str, clf_report: dict, reg_report: dict, clu_report: dict
+) -> tuple[list[dict], dict[str, str]]:
     """Renvoie les model_runs à insérer + les ids nécessaires pour lier
     predictions/clusters : {'classification_retenu': id, 'regression_retenu': id,
-    'clustering_<NIVEAU>': id}."""
-    clf_report = _load_json("classification_report.json")
-    reg_report = _load_json("regression_report.json")
-    clu_report = _load_json("clustering_report.json")
-
+    'clustering_<NIVEAU>': id}. Concerne uniquement l'entraînement complet (CLI) :
+    un import score-only ne réentraîne rien, donc n'a aucune nouvelle métrique
+    à consigner ici — voir push_scored_import.lookup_model_run_ids, qui
+    RÉUTILISE ces ids sans en créer de nouveaux."""
     runs = []
     ids = {}
 
@@ -215,9 +242,8 @@ def build_model_runs_payload(dataset_id: str) -> dict[str, str]:
     return runs, ids
 
 
-def build_clusters_payload(dataset_id: str, pseudo_to_id: dict, run_ids: dict) -> list[dict]:
-    clusters = _load_csv("clusters.csv")
-    out = clusters[["student_pseudo", "niveau", "cluster_id", "cluster_label", "pca_1", "pca_2"]].copy()
+def build_clusters_payload(dataset_id: str, pseudo_to_id: dict, run_ids: dict, clusters_df: pd.DataFrame) -> list[dict]:
+    out = clusters_df[["student_pseudo", "niveau", "cluster_id", "cluster_label", "pca_1", "pca_2"]].copy()
     out["student_id"] = out["student_pseudo"].map(pseudo_to_id)
     out["dataset_id"] = dataset_id
     out["model_run_id"] = out["niveau"].map(lambda n: run_ids.get(f"clustering_{n}"))
@@ -225,9 +251,8 @@ def build_clusters_payload(dataset_id: str, pseudo_to_id: dict, run_ids: dict) -
     return records_json_safe(out)
 
 
-def build_predictions_payload(dataset_id: str, pseudo_to_id: dict, run_ids: dict) -> list[dict]:
-    explanations = _load_csv("explanations_students.csv")
-    out = explanations[
+def build_predictions_payload(dataset_id: str, pseudo_to_id: dict, run_ids: dict, explanations_df: pd.DataFrame) -> list[dict]:
+    out = explanations_df[
         [
             "student_pseudo",
             "a_risque_predit",
@@ -246,9 +271,8 @@ def build_predictions_payload(dataset_id: str, pseudo_to_id: dict, run_ids: dict
     return records_json_safe(out)
 
 
-def build_recommendations_payload(dataset_id: str, pseudo_to_id: dict) -> list[dict]:
-    rec = _load_csv("recommendations.csv")
-    out = rec[
+def build_recommendations_payload(dataset_id: str, pseudo_to_id: dict, rec_df: pd.DataFrame) -> list[dict]:
+    out = rec_df[
         [
             "student_pseudo",
             "priorite",
@@ -273,14 +297,31 @@ def run(dry_run: bool, label: str, annee_scolaire: str, semestre: str) -> None:
     dataset_id = str(uuid.uuid4())
     print(f"Nouveau dataset_id : {dataset_id}")
 
+    quality = _load_json("data_quality_report.json")
+    quality_summary = {k: quality[k] for k in QUALITY_SUMMARY_ALLOWED_KEYS if k in quality}
+    risk_config = _load_json("risk_config.json")
+    profile = _load_csv("student_profile_labeled.csv")
+    identity = _load_csv("identity_mapping.csv")
+    long_df = _load_csv("notes_long_with_aggregates.csv")
+    clf_report = _load_json("classification_report.json")
+    reg_report = _load_json("regression_report.json")
+    clu_report = _load_json("clustering_report.json")
+    clusters_df = _load_csv("clusters.csv")
+    explanations_df = _load_csv("explanations_students.csv")
+    rec_df = _load_csv("recommendations.csv")
+
     subjects = build_subjects_payload()
-    dataset_row = build_dataset_payload(dataset_id, label, annee_scolaire, semestre)
-    students, pseudo_to_id = build_students_payload(dataset_id)
-    grades = build_grades_payload(dataset_id, pseudo_to_id)
-    model_runs, run_ids = build_model_runs_payload(dataset_id)
-    clusters = build_clusters_payload(dataset_id, pseudo_to_id, run_ids)
-    predictions = build_predictions_payload(dataset_id, pseudo_to_id, run_ids)
-    recommendations = build_recommendations_payload(dataset_id, pseudo_to_id)
+    dataset_row = build_dataset_payload(
+        dataset_id, label, annee_scolaire, semestre,
+        quality_summary, risk_config,
+        quality.get("n_students_uniques"), quality.get("n_enregistrements"),
+    )
+    students, pseudo_to_id = build_students_payload(dataset_id, annee_scolaire, profile, identity)
+    grades = build_grades_payload(dataset_id, pseudo_to_id, long_df)
+    model_runs, run_ids = build_model_runs_payload(dataset_id, clf_report, reg_report, clu_report)
+    clusters = build_clusters_payload(dataset_id, pseudo_to_id, run_ids, clusters_df)
+    predictions = build_predictions_payload(dataset_id, pseudo_to_id, run_ids, explanations_df)
+    recommendations = build_recommendations_payload(dataset_id, pseudo_to_id, rec_df)
 
     counts_local = {
         "subjects": len(subjects),
@@ -305,7 +346,19 @@ def run(dry_run: bool, label: str, annee_scolaire: str, semestre: str) -> None:
     print("\nEnvoi vers Supabase...")
     client.insert("subjects", subjects, upsert_on_conflict="code")
     client.insert("datasets", [dataset_row])
-    client.insert("students", students)
+    try:
+        client.insert("students", students)
+    except RuntimeError as exc:
+        if "students_pseudo_academic_year_unique" in str(exc):
+            raise RuntimeError(
+                f"Import refusé : au moins un élève a déjà une ligne pour l'année "
+                f"scolaire {annee_scolaire!r} (contrainte students_pseudo_academic_year_unique). "
+                "Ce script vient probablement d'être relancé sur un import déjà chargé pour "
+                "cette année — vérifiez data/artifacts/models/ (précédent dataset_id) avant "
+                "de recharger, ou archivez/supprimez l'ancien dataset si c'est une correction "
+                "volontaire."
+            ) from exc
+        raise
     client.insert("grades", grades)
     client.insert("model_runs", model_runs)
     client.insert("clusters", clusters)

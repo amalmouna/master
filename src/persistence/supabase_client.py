@@ -70,6 +70,15 @@ class SupabaseRestClient:
             inserted += len(chunk)
         return inserted
 
+    def select(self, table: str, params: dict[str, str]) -> list[dict]:
+        """Lecture générique (ex. retrouver un model_runs existant à
+        réutiliser pour un import score-only, cf. push_scored_import.py)."""
+        endpoint = f"{self.url}/rest/v1/{table}"
+        resp = self._session.get(endpoint, params=params)
+        if resp.status_code >= 300:
+            raise RuntimeError(f"Échec lecture '{table}' : {resp.status_code} {resp.text[:500]}")
+        return resp.json()
+
     def count(self, table: str, filters: dict[str, str] | None = None) -> int:
         """Compte les lignes visibles (via le header Content-Range PostgREST),
         filtrées par ex. {'dataset_id': 'eq.<uuid>'}."""

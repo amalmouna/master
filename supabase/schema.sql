@@ -2,9 +2,10 @@
 --
 -- Pour un projet Supabase déjà existant, ce fichier seul ne suffit pas
 -- ("create table if not exists" ne modifie pas les tables déjà créées) :
--- appliquez dans l'ordre migration_002_auth_and_identity.sql puis
--- migration_003_role_based_access.sql. Ce fichier est la référence pour un
--- projet neuf, ou pour comprendre l'état final attendu.
+-- appliquez dans l'ordre migration_002_auth_and_identity.sql,
+-- migration_003_role_based_access.sql, puis migration_004_multi_year_imports.sql.
+-- Ce fichier est la référence pour un projet neuf, ou pour comprendre l'état
+-- final attendu.
 --
 -- CHANGEMENT DE POLITIQUE (voir docs/AUTH_SETUP.md) : ce schéma contient le
 -- NOM RÉEL des élèves (students.nom_complet) et leur âge exact — dérogation
@@ -104,7 +105,8 @@ create table if not exists subjects (
 create table if not exists students (
     id uuid primary key,
     dataset_id uuid not null references datasets(id) on delete cascade,
-    student_pseudo text not null,
+    student_pseudo text not null,       -- stable à travers les années (même sel) : lie l'historique d'un élève
+    academic_year text not null check (academic_year ~ '^\d{4}/\d{4}$'),
     nom_complet text,
     age int,
     niveau text not null,
@@ -115,12 +117,18 @@ create table if not exists students (
     tendance_globale numeric,
     a_risque boolean not null default false,
     remarque_encodee numeric,
-    unique (dataset_id, student_pseudo)
+    unique (dataset_id, student_pseudo),
+    -- Garde-fou : un même élève ne peut apparaître qu'une fois par année
+    -- scolaire, même si le même import est chargé deux fois par erreur
+    -- (dataset_id différent mais même student_pseudo + même academic_year).
+    unique (student_pseudo, academic_year)
 );
 create index if not exists idx_students_dataset on students(dataset_id);
 create index if not exists idx_students_niveau on students(niveau);
 create index if not exists idx_students_classe on students(classe);
 create index if not exists idx_students_a_risque on students(a_risque);
+create index if not exists idx_students_pseudo_history on students(student_pseudo);
+create index if not exists idx_students_academic_year on students(academic_year);
 
 -- ---------------------------------------------------------------------------
 -- grades : une ligne par (élève x matière), composantes disponibles uniquement.
@@ -231,6 +239,9 @@ create policy "lecture_filtree" on datasets for select using (is_app_user());
 create policy "lecture_filtree" on subjects for select using (is_app_user());
 create policy "lecture_filtree" on model_runs for select using (is_admin());
 
+-- Filtre par classe, pas par année : un scoped_user assigné à "2APIC-4" voit
+-- cette classe pour TOUTES les années où elle apparaît (comportement voulu,
+-- cf. migration_004_multi_year_imports.sql section 5).
 create policy "lecture_filtree" on students for select
   using (is_admin() or classe = any(get_user_classes()));
 
