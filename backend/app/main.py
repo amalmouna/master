@@ -25,6 +25,7 @@ import tempfile
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import require_admin
 
@@ -49,6 +50,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend.import")
 
 app = FastAPI(title="Import Massar — backend score-only")
+
+# CORS : verrouillé au(x) seul(s) origine(s) du frontend Vercel, jamais "*"
+# (endpoint admin qui écrit des données réelles). FRONTEND_ORIGIN — une ou
+# plusieurs origines séparées par des virgules (ex. domaine de prod +
+# domaines de preview Vercel) — jamais codé en dur ici : à définir dans
+# backend/.env.local en local, dans les variables d'environnement Render en
+# production (voir DEPLOY_BACKEND.md). Si absent, aucune origine n'est
+# autorisée (échec fermé) plutôt qu'un repli permissif.
+_frontend_origins = [o.strip() for o in os.environ.get("FRONTEND_ORIGIN", "").split(",") if o.strip()]
+if not _frontend_origins:
+    logging.getLogger("backend.import").warning(
+        "FRONTEND_ORIGIN non défini : aucune origine autorisée en CORS (échec fermé)."
+    )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_frontend_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.get("/health")

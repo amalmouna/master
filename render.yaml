@@ -1,0 +1,41 @@
+# Blueprint Render — backend d'import Massar (backend/app/main.py).
+#
+# Ne déploie rien tant que vous ne l'avez pas explicitement fait dans le
+# dashboard Render (Blueprints → New Blueprint Instance) — ce fichier décrit
+# la config, il ne déclenche aucun déploiement en étant simplement présent
+# dans le dépôt. Voir DEPLOY_BACKEND.md pour la marche à suivre exacte.
+#
+# rootDir: backend — le build/start tournent avec backend/ comme dossier de
+# travail, mais src/score_import.py et data/artifacts/models/ (à la racine du
+# dépôt, committés malgré .gitignore, cf. .gitignore) sont toujours résolus
+# via des chemins absolus calculés depuis __file__ dans backend/app/main.py,
+# pas depuis le cwd — donc ce rootDir n'affecte pas la résolution des modèles.
+services:
+  - type: web
+    name: massar-import-backend
+    runtime: python
+    plan: free
+    # region: choisissez la région Render la plus proche de votre Supabase/
+    # utilisateurs (ex. "frankfurt" pour l'Europe/Maroc) — non fixé ici,
+    # aucune information dans ce projet ne justifie un choix par défaut.
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # Secrets — valeurs à saisir à la main dans le dashboard Render
+      # (Environment), jamais dans ce fichier, jamais commitées. `sync: false`
+      # dit à Render de ne PAS les gérer/synchroniser depuis ce blueprint :
+      # elles restent à définir manuellement une fois, service par service.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: MASSAR_SALT
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false

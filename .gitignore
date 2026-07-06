@@ -1,6 +1,20 @@
 data/raw/
 data/processed/
-data/artifacts/
+# Exception étroite : modèles déjà ajustés nécessaires au backend score-only
+# en déploiement (Render déploie depuis git — data/artifacts/ serait sinon
+# vide). Poids/paramètres uniquement, aucune donnée élève. Un dossier ignoré
+# ne peut pas être "dé-ignoré" par fichier : il faut ignorer le contenu, pas
+# le dossier lui-même, à chaque niveau, pour que les négations plus bas
+# s'appliquent (limite connue de gitignore).
+data/artifacts/*
+!data/artifacts/models/
+data/artifacts/models/*
+!data/artifacts/models/logistic_regression.joblib
+!data/artifacts/models/ridge.joblib
+!data/artifacts/models/clustering_*.joblib
+!data/artifacts/models/recommendation_thresholds.json
+# Les alternatives non retenues (random_forest*.joblib, ~12 Mo) et le sel de
+# pseudonymisation (secret) restent ignorés par data/artifacts/models/* ci-dessus.
 .env
 .env.local
 __pycache__/
