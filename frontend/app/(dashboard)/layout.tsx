@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/nav/Sidebar";
-import { getVerifiedUser } from "@/lib/supabase/server";
+import { getCurrentUserRole } from "@/lib/supabase/roles";
 
 /**
  * Deuxième ligne de défense après proxy.ts (cf. guide Next.js sur l'auth :
@@ -10,12 +10,12 @@ import { getVerifiedUser } from "@/lib/supabase/server";
  * vérifiée par le serveur Auth (getUser(), jamais getSession()).
  */
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const user = await getVerifiedUser();
-  if (!user) redirect("/login");
+  const role = await getCurrentUserRole();
+  if (!role) redirect("/login");
 
   return (
     <div className="flex min-h-full">
-      <Sidebar userEmail={user.email ?? ""} />
+      <Sidebar userEmail={role.email} isAdmin={role.isAdmin} />
       <main className="flex-1 min-w-0">{children}</main>
     </div>
   );

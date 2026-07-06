@@ -1,14 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+const PUBLIC_PATHS = ["/login"];
 
 /**
  * Next.js 16 renomme middleware.ts -> proxy.ts (comportement identique).
- * Vérifie la session sur CHAQUE requête (sauf /login et /auth/callback) et
- * redirige vers /login si absente — aucune page ne doit pouvoir rendre de
- * données sans session valide. Rafraîchit aussi le cookie de session ici :
- * c'est le point unique qui s'exécute avant tout Server Component.
+ * Vérifie la session sur CHAQUE requête (sauf /login) et redirige vers
+ * /login si absente — aucune page ne doit pouvoir rendre de données sans
+ * session valide. Rafraîchit aussi le cookie de session ici : c'est le
+ * point unique qui s'exécute avant tout Server Component.
  */
 export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

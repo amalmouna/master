@@ -1,47 +1,31 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export function LoginForm({ next }: { next: string }) {
+  const router = useRouter();
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [password, setPassword] = useState("");
+  const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setStatus("sending");
+    setPending(true);
     setErrorMessage(null);
 
     const supabase = createSupabaseBrowserClient();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        // shouldCreateUser: false -> seuls les comptes déjà créés (invitation
-        // dashboard) peuvent se connecter. Aucune inscription possible ici,
-        // même si le lien magique est intercepté ou l'email inconnu.
-        shouldCreateUser: false,
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
-      },
-    });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
-      setStatus("error");
-      setErrorMessage(
-        "Connexion impossible pour cet email. Contactez l'administration si vous pensez qu'il s'agit d'une erreur."
-      );
+      setPending(false);
+      setErrorMessage("Email ou mot de passe incorrect.");
       return;
     }
-    setStatus("sent");
-  }
-
-  if (status === "sent") {
-    return (
-      <p className="text-sm text-foreground">
-        Un lien de connexion a été envoyé à <span className="font-medium">{email}</span>, s&apos;il
-        correspond à un compte autorisé. Vérifiez votre boîte de réception.
-      </p>
-    );
+    router.push(next);
+    router.refresh();
   }
 
   return (
@@ -60,15 +44,26 @@ export function LoginForm({ next }: { next: string }) {
           placeholder="prenom.nom@etablissement.ma"
         />
       </div>
-      {status === "error" && errorMessage && (
-        <p className="text-xs text-danger">{errorMessage}</p>
-      )}
+      <div>
+        <label htmlFor="password" className="block text-xs font-medium text-muted-foreground">
+          Mot de passe
+        </label>
+        <input
+          id="password"
+          type="password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+        />
+      </div>
+      {errorMessage && <p className="text-xs text-danger">{errorMessage}</p>}
       <button
         type="submit"
-        disabled={status === "sending"}
+        disabled={pending}
         className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-foreground disabled:opacity-60"
       >
-        {status === "sending" ? "Envoi en cours..." : "Recevoir un lien de connexion"}
+        {pending ? "Connexion..." : "Se connecter"}
       </button>
     </form>
   );

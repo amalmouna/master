@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, BarChart3, AlertTriangle, Boxes, LogOut } from "lucide-react";
+import { LayoutDashboard, BarChart3, AlertTriangle, Boxes, Users, LogOut } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Vue d'ensemble", icon: LayoutDashboard },
@@ -11,8 +11,11 @@ const NAV_ITEMS = [
   { href: "/profils", label: "Profils", icon: Boxes },
 ];
 
-export function Sidebar({ userEmail }: { userEmail: string }) {
+export function Sidebar({ userEmail, isAdmin }: { userEmail: string; isAdmin: boolean }) {
   const pathname = usePathname();
+  const navItems = isAdmin
+    ? [...NAV_ITEMS, { href: "/utilisateurs", label: "Utilisateurs", icon: Users }]
+    : NAV_ITEMS;
 
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-surface flex flex-col">
@@ -22,7 +25,7 @@ export function Sidebar({ userEmail }: { userEmail: string }) {
         </span>
       </div>
       <nav className="flex-1 px-2 py-3 space-y-0.5">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (
             <Link

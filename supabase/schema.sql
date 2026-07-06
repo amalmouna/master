@@ -1,92 +1,79 @@
--- Étape 10 — schéma Supabase, architecture privée/authentifiée.
+-- Étape 10 — schéma Supabase, architecture privée/authentifiée, accès par rôle.
 --
--- CHANGEMENT DE POLITIQUE (voir docs/AUTH_SETUP.md pour le contexte complet) :
--- ce schéma contient désormais le NOM RÉEL des élèves (colonne
--- students.nom_complet) et leur âge exact. C'est une dérogation explicite et
+-- Pour un projet Supabase déjà existant, ce fichier seul ne suffit pas
+-- ("create table if not exists" ne modifie pas les tables déjà créées) :
+-- appliquez dans l'ordre migration_002_auth_and_identity.sql puis
+-- migration_003_role_based_access.sql. Ce fichier est la référence pour un
+-- projet neuf, ou pour comprendre l'état final attendu.
+--
+-- CHANGEMENT DE POLITIQUE (voir docs/AUTH_SETUP.md) : ce schéma contient le
+-- NOM RÉEL des élèves (students.nom_complet) et leur âge exact — dérogation
 -- documentée à la règle par défaut du projet ("aucune donnée nominative ne
 -- doit exister au-delà de l'anonymisation"), décidée par le porteur du
--- projet en échange d'un verrouillage strict de l'accès : plus aucune
--- lecture anonyme n'est autorisée (RLS admin-only ci-dessous), et le code
--- national (student_code) reste hors base dans tous les cas — seul le hash
--- stable (student_pseudo) sert de clé technique. Le pipeline Python (étapes
--- D-9 : agrégats, modèles, clustering, recommandations) continue de
--- fonctionner exclusivement sur les données pseudonymisées SANS nom ; seule
--- la couche de persistance (ce schéma + le loader) reçoit l'identité réelle,
--- au moment du chargement, via src/anonymization/anonymize.py::build_identity_mapping.
+-- projet en échange d'un verrouillage strict : accès par rôle, filtré par
+-- classe pour les comptes non-admin. Le code national (student_code) reste
+-- hors base dans tous les cas — seul le hash stable (student_pseudo) sert de
+-- clé technique. Le pipeline Python (étapes D-9) continue de fonctionner
+-- exclusivement sur les données pseudonymisées SANS nom ; seule la couche de
+-- persistance reçoit l'identité réelle, via
+-- src/anonymization/anonymize.py::build_identity_mapping.
 --
--- RLS : lecture réservée aux utilisateurs authentifiés listés dans `admins`
--- (voir la fonction is_admin() plus bas). Aucune table scolaire n'est
--- lisible par le rôle anon. Écriture réservée à service_role (loader Python),
--- qui contourne RLS nativement côté Supabase — jamais utilisé côté frontend.
+-- Accès : deux rôles applicatifs (table user_roles) — admin (tout voit, gère
+-- les comptes) et scoped_user (voit uniquement les classes listées dans
+-- user_classes). Aucune inscription publique : tous les comptes sont créés
+-- par un admin (dashboard pour le premier, écran in-app pour les suivants).
+-- Aucune table scolaire n'est lisible par le rôle anon.
 
 create extension if not exists pgcrypto;
 
 -- ---------------------------------------------------------------------------
--- Administration des accès (Supabase Auth)
+-- Rôles et périmètre de classes.
 -- ---------------------------------------------------------------------------
-
--- Allowlist des emails autorisés à devenir administrateur. À remplir avec les
--- vraies adresses de l'administration (cf. docs/AUTH_SETUP.md) :
---   insert into admin_allowlist (email) values ('directeur@exemple.ma');
-create table if not exists admin_allowlist (
-    email text primary key
-);
-
--- Comptes administrateurs effectifs, liés à auth.users. Rempli automatiquement
--- par le trigger ci-dessous quand un compte Supabase Auth est créé (via
--- invitation dashboard, jamais via inscription publique — désactivée) avec un
--- email présent dans admin_allowlist. Un compte créé avec un email absent de
--- la liste n'obtient AUCUN accès (pas de ligne ici -> is_admin() = false).
-create table if not exists admins (
-    id uuid primary key references auth.users(id) on delete cascade,
-    email text not null,
+create table if not exists user_roles (
+    user_id uuid primary key references auth.users(id) on delete cascade,
+    role text not null check (role in ('admin', 'scoped_user')),
     created_at timestamptz not null default now()
 );
 
-create or replace function handle_new_admin_user()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if exists (select 1 from admin_allowlist where email = new.email) then
-    insert into admins (id, email) values (new.id, new.email)
-    on conflict (id) do nothing;
-  end if;
-  return new;
-end;
-$$;
+create table if not exists user_classes (
+    user_id uuid not null references auth.users(id) on delete cascade,
+    classe text not null,
+    primary key (user_id, classe)
+);
 
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute function handle_new_admin_user();
+alter table user_roles enable row level security;
+alter table user_classes enable row level security;
+-- Aucune politique anon/authenticated : accès exclusif via service_role
+-- (écran de gestion des utilisateurs, côté serveur) ou via les fonctions
+-- security definer ci-dessous.
 
--- Fonction utilisée par toutes les politiques RLS ci-dessous. security definer
--- pour pouvoir lire `admins` même si son propre RLS interdit la lecture directe.
 create or replace function is_admin()
 returns boolean
-language sql
-security definer
-set search_path = public
-stable
+language sql security definer set search_path = public stable
 as $$
-  select exists (select 1 from admins where id = auth.uid());
+  select exists (select 1 from user_roles where user_id = auth.uid() and role = 'admin');
 $$;
 
-alter table admin_allowlist enable row level security;
-alter table admins enable row level security;
--- Aucune politique select/insert/update/delete pour anon/authenticated sur ces
--- deux tables : accès exclusivement via service_role (dashboard/SQL editor)
--- ou via is_admin(), qui contourne RLS grâce à security definer.
+create or replace function get_user_classes()
+returns text[]
+language sql security definer set search_path = public stable
+as $$
+  select coalesce(array_agg(classe), '{}'::text[]) from user_classes where user_id = auth.uid();
+$$;
+
+create or replace function is_app_user()
+returns boolean
+language sql security definer set search_path = public stable
+as $$
+  select exists (select 1 from user_roles where user_id = auth.uid());
+$$;
 
 -- ---------------------------------------------------------------------------
 -- datasets : un import = un semestre. Traçabilité (§2.8).
 -- ---------------------------------------------------------------------------
 create table if not exists datasets (
     id uuid primary key,
-    label text not null,                -- ex. "2025-2026 Semestre 1"
+    label text not null,
     annee_scolaire text,
     semestre text,
     date_import timestamptz not null default now(),
@@ -97,7 +84,7 @@ create table if not exists datasets (
     -- stocker ici les listes brutes d'anomalies/doublons de data_quality_report.json,
     -- qui référencent des student_code en clair avant anonymisation (étape B, avant C).
     quality_summary jsonb,
-    risk_config jsonb,                  -- seuils de la définition de cible (targets.risk_config())
+    risk_config jsonb,
     created_at timestamptz not null default now()
 );
 
@@ -105,21 +92,21 @@ create table if not exists datasets (
 -- subjects : référentiel statique des 7 matières + domaine.
 -- ---------------------------------------------------------------------------
 create table if not exists subjects (
-    code text primary key,              -- ex. "MATHEMATIQUES"
+    code text primary key,
     nom_fr text not null,
     domaine text not null check (domaine in ('scientifique', 'linguistique', 'sciences_humaines'))
 );
 
 -- ---------------------------------------------------------------------------
 -- students : un élève par dataset (mono-semestre, cf. §1.1). Identité réelle
--- (voir bandeau en tête de fichier) — accès verrouillé par RLS admin-only.
+-- (voir bandeau en tête de fichier) — accès filtré par classe (RLS ci-dessous).
 -- ---------------------------------------------------------------------------
 create table if not exists students (
     id uuid primary key,
     dataset_id uuid not null references datasets(id) on delete cascade,
-    student_pseudo text not null,       -- hash HMAC stable — clé technique, jamais le code national
-    nom_complet text,                   -- nom réel (dérogation documentée ci-dessus)
-    age int,                            -- âge exact au 1er septembre, jamais la date de naissance
+    student_pseudo text not null,
+    nom_complet text,
+    age int,
     niveau text not null,
     classe text not null,
     nb_matieres_suivies int,
@@ -127,11 +114,12 @@ create table if not exists students (
     dispersion_intermatiere numeric,
     tendance_globale numeric,
     a_risque boolean not null default false,
-    remarque_encodee numeric,           -- moyenne ordinale (0-4), descriptif uniquement
+    remarque_encodee numeric,
     unique (dataset_id, student_pseudo)
 );
 create index if not exists idx_students_dataset on students(dataset_id);
 create index if not exists idx_students_niveau on students(niveau);
+create index if not exists idx_students_classe on students(classe);
 create index if not exists idx_students_a_risque on students(a_risque);
 
 -- ---------------------------------------------------------------------------
@@ -143,7 +131,6 @@ create table if not exists grades (
     student_id uuid not null references students(id) on delete cascade,
     subject_code text not null references subjects(code),
     c1 numeric, c2 numeric, c3 numeric, c4 numeric, activites numeric,
-    -- Distingue "composante non saisie" de "composante hors schéma du fichier" (cf. étape A/B).
     c1_colonne_existe boolean not null default false,
     c2_colonne_existe boolean not null default false,
     c3_colonne_existe boolean not null default false,
@@ -152,7 +139,7 @@ create table if not exists grades (
     moyenne_matiere numeric,
     n_composantes smallint,
     tendance_matiere numeric,
-    remarque_fr text,                   -- texte teacher, non nominatif
+    remarque_fr text,
     unique (student_id, subject_code)
 );
 create index if not exists idx_grades_dataset on grades(dataset_id);
@@ -165,8 +152,8 @@ create table if not exists model_runs (
     id uuid primary key,
     dataset_id uuid not null references datasets(id) on delete cascade,
     type text not null check (type in ('classification', 'regression', 'clustering')),
-    algo text not null,                 -- ex. "logistic_regression", "ridge", "kmeans"
-    niveau text,                        -- non nul uniquement pour un run de clustering (par niveau)
+    algo text not null,
+    niveau text,
     params jsonb,
     metrics jsonb,
     feature_columns jsonb,
@@ -229,7 +216,7 @@ create index if not exists idx_recommendations_dataset on recommendations(datase
 create index if not exists idx_recommendations_priorite on recommendations(priorite);
 
 -- ---------------------------------------------------------------------------
--- Row Level Security — tables scolaires
+-- Row Level Security — tables scolaires, filtrées par classe pour scoped_user.
 -- ---------------------------------------------------------------------------
 alter table datasets enable row level security;
 alter table subjects enable row level security;
@@ -240,14 +227,33 @@ alter table clusters enable row level security;
 alter table predictions enable row level security;
 alter table recommendations enable row level security;
 
--- Lecture réservée aux administrateurs authentifiés (is_admin()). anon exclu
--- explicitement : aucune policy ne le mentionne, et RLS est fail-closed par
--- défaut (aucune ligne visible sans policy correspondante).
-create policy "lecture_admin" on datasets for select using (is_admin());
-create policy "lecture_admin" on subjects for select using (is_admin());
-create policy "lecture_admin" on students for select using (is_admin());
-create policy "lecture_admin" on grades for select using (is_admin());
-create policy "lecture_admin" on model_runs for select using (is_admin());
-create policy "lecture_admin" on clusters for select using (is_admin());
-create policy "lecture_admin" on predictions for select using (is_admin());
-create policy "lecture_admin" on recommendations for select using (is_admin());
+create policy "lecture_filtree" on datasets for select using (is_app_user());
+create policy "lecture_filtree" on subjects for select using (is_app_user());
+create policy "lecture_filtree" on model_runs for select using (is_admin());
+
+create policy "lecture_filtree" on students for select
+  using (is_admin() or classe = any(get_user_classes()));
+
+create policy "lecture_filtree" on grades for select
+  using (
+    is_admin()
+    or exists (select 1 from students s where s.id = grades.student_id and s.classe = any(get_user_classes()))
+  );
+
+create policy "lecture_filtree" on clusters for select
+  using (
+    is_admin()
+    or exists (select 1 from students s where s.id = clusters.student_id and s.classe = any(get_user_classes()))
+  );
+
+create policy "lecture_filtree" on predictions for select
+  using (
+    is_admin()
+    or exists (select 1 from students s where s.id = predictions.student_id and s.classe = any(get_user_classes()))
+  );
+
+create policy "lecture_filtree" on recommendations for select
+  using (
+    is_admin()
+    or exists (select 1 from students s where s.id = recommendations.student_id and s.classe = any(get_user_classes()))
+  );

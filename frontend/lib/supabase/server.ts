@@ -40,16 +40,3 @@ export async function createSupabaseServerClient() {
     },
   });
 }
-
-/** Session utilisateur vérifiée (appel réseau à Auth, jamais getSession() —
- * voir @supabase/ssr README : getSession() n'est pas fiable pour une décision
- * d'autorisation, un cookie forgé pourrait usurper un utilisateur). */
-export async function getVerifiedUser() {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-  if (error || !user) return null;
-  return user;
-}
