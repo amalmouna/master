@@ -8,20 +8,58 @@
 -- Le rôle et les classes autorisées sont des données explicites (tables
 -- ci-dessous), assignées au moment de la création du compte, jamais déduites
 -- d'un email.
+--
+-- Ordre important (corrigé) : toutes les politiques qui référencent
+-- is_admin() doivent être supprimées AVANT toute tentative de modifier cette
+-- fonction, sous peine de "cannot drop function is_admin() because other
+-- objects depend on it". Et comme sa signature ne change pas (même nom,
+-- aucun argument, renvoie boolean), on ne la DROP jamais : create or replace
+-- suffit et ne casse aucune dépendance existante.
 
 -- ---------------------------------------------------------------------------
--- 1. Nettoyage de l'ancien mécanisme (migration 002), remplacé ci-dessous.
+-- 1. Supprimer TOUTES les anciennes politiques en premier, avant de toucher
+--    à quoi que ce soit dont elles dépendent (is_admin(), etc.).
+-- ---------------------------------------------------------------------------
+drop policy if exists "lecture_admin" on datasets;
+drop policy if exists "lecture_admin" on subjects;
+drop policy if exists "lecture_admin" on students;
+drop policy if exists "lecture_admin" on grades;
+drop policy if exists "lecture_admin" on model_runs;
+drop policy if exists "lecture_admin" on clusters;
+drop policy if exists "lecture_admin" on predictions;
+drop policy if exists "lecture_admin" on recommendations;
+-- Au cas où la toute première politique (avant migration 002) serait encore là.
+drop policy if exists "lecture_publique" on datasets;
+drop policy if exists "lecture_publique" on subjects;
+drop policy if exists "lecture_publique" on students;
+drop policy if exists "lecture_publique" on grades;
+drop policy if exists "lecture_publique" on model_runs;
+drop policy if exists "lecture_publique" on clusters;
+drop policy if exists "lecture_publique" on predictions;
+drop policy if exists "lecture_publique" on recommendations;
+-- Idempotence : si cette migration a déjà été (partiellement) appliquée.
+drop policy if exists "lecture_filtree" on datasets;
+drop policy if exists "lecture_filtree" on subjects;
+drop policy if exists "lecture_filtree" on students;
+drop policy if exists "lecture_filtree" on grades;
+drop policy if exists "lecture_filtree" on model_runs;
+drop policy if exists "lecture_filtree" on clusters;
+drop policy if exists "lecture_filtree" on predictions;
+drop policy if exists "lecture_filtree" on recommendations;
+
+-- ---------------------------------------------------------------------------
+-- 2. Nettoyage de l'ancien mécanisme (migration 002). Plus aucune politique
+--    ne référence is_admin() à ce stade : la table admins et le trigger
+--    peuvent être supprimés sans erreur de dépendance. is_admin() elle-même
+--    n'est PAS supprimée (cf. note d'en-tête) — redéfinie en step 4.
 -- ---------------------------------------------------------------------------
 drop trigger if exists on_auth_user_created on auth.users;
 drop function if exists handle_new_admin_user();
 drop table if exists admin_allowlist;
 drop table if exists admins;
--- is_admin() est redéfini plus bas contre user_roles ; drop préalable au cas
--- où la signature devait changer.
-drop function if exists is_admin();
 
 -- ---------------------------------------------------------------------------
--- 2. Rôles et périmètre de classes.
+-- 3. Rôles et périmètre de classes.
 -- ---------------------------------------------------------------------------
 create table if not exists user_roles (
     user_id uuid primary key references auth.users(id) on delete cascade,
@@ -48,7 +86,9 @@ alter table user_classes enable row level security;
 -- definer ci-dessous, qui contournent RLS.
 
 -- ---------------------------------------------------------------------------
--- 3. Fonctions utilisées par les politiques RLS.
+-- 4. Fonctions utilisées par les politiques RLS. create or replace
+--    uniquement — jamais de drop (cf. note d'en-tête) : la signature ne
+--    change pas, seul le corps est mis à jour (user_roles au lieu d'admins).
 -- ---------------------------------------------------------------------------
 create or replace function is_admin()
 returns boolean
@@ -85,38 +125,9 @@ as $$
 $$;
 
 -- ---------------------------------------------------------------------------
--- 4. Politiques RLS — remplace "lecture_admin" (migration 002) par un accès
---    filtré par classe pour les scoped_user, complet pour les admin.
+-- 5. Nouvelles politiques RLS — filtrées par classe pour scoped_user,
+--    complètes pour admin. Les anciennes ont déjà été supprimées en step 1.
 -- ---------------------------------------------------------------------------
-drop policy if exists "lecture_admin" on datasets;
-drop policy if exists "lecture_admin" on subjects;
-drop policy if exists "lecture_admin" on students;
-drop policy if exists "lecture_admin" on grades;
-drop policy if exists "lecture_admin" on model_runs;
-drop policy if exists "lecture_admin" on clusters;
-drop policy if exists "lecture_admin" on predictions;
-drop policy if exists "lecture_admin" on recommendations;
--- Au cas où la toute première politique (avant migration 002) serait encore là.
-drop policy if exists "lecture_publique" on datasets;
-drop policy if exists "lecture_publique" on subjects;
-drop policy if exists "lecture_publique" on students;
-drop policy if exists "lecture_publique" on grades;
-drop policy if exists "lecture_publique" on model_runs;
-drop policy if exists "lecture_publique" on clusters;
-drop policy if exists "lecture_publique" on predictions;
-drop policy if exists "lecture_publique" on recommendations;
-
-drop policy if exists "lecture_filtree" on datasets;
-drop policy if exists "lecture_filtree" on subjects;
-drop policy if exists "lecture_filtree" on students;
-drop policy if exists "lecture_filtree" on grades;
-drop policy if exists "lecture_filtree" on model_runs;
-drop policy if exists "lecture_filtree" on clusters;
-drop policy if exists "lecture_filtree" on predictions;
-drop policy if exists "lecture_filtree" on recommendations;
-
--- Métadonnées non nominatives : tout compte applicatif reconnu (admin ou
--- scoped_user) peut les lire.
 create policy "lecture_filtree" on datasets for select using (is_app_user());
 create policy "lecture_filtree" on subjects for select using (is_app_user());
 
@@ -167,7 +178,7 @@ create policy "lecture_filtree" on recommendations for select
   );
 
 -- ---------------------------------------------------------------------------
--- 5. Rattacher le premier admin (créé manuellement dans le dashboard).
+-- 6. Rattacher le premier admin (créé manuellement dans le dashboard).
 --    Remplacez l'email puis exécutez CETTE requête séparément :
 -- ---------------------------------------------------------------------------
 -- insert into user_roles (user_id, role)
