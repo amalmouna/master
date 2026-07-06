@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, BarChart3, AlertTriangle, Boxes, Users, LogOut } from "lucide-react";
+import { LayoutDashboard, BarChart3, AlertTriangle, Boxes, Users, Upload, LogOut } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Vue d'ensemble", icon: LayoutDashboard },
@@ -11,11 +11,14 @@ const NAV_ITEMS = [
   { href: "/profils", label: "Profils", icon: Boxes },
 ];
 
+const ADMIN_NAV_ITEMS = [
+  { href: "/import", label: "Importer des données", icon: Upload },
+  { href: "/utilisateurs", label: "Utilisateurs", icon: Users },
+];
+
 export function Sidebar({ userEmail, isAdmin }: { userEmail: string; isAdmin: boolean }) {
   const pathname = usePathname();
-  const navItems = isAdmin
-    ? [...NAV_ITEMS, { href: "/utilisateurs", label: "Utilisateurs", icon: Users }]
-    : NAV_ITEMS;
+  const navItems = isAdmin ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS;
 
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-surface flex flex-col">

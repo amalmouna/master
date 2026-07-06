@@ -11,8 +11,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-/** Client Supabase navigateur (page de connexion uniquement) — clé anon,
- * session gérée via cookies pour rester synchronisée avec le serveur
+/** Client Supabase navigateur (page de connexion, formulaire d'import) — clé
+ * anon, session gérée via cookies pour rester synchronisée avec le serveur
  * (Server Components, proxy). */
 export function createSupabaseBrowserClient() {
   return createBrowserClient(supabaseUrl!, supabaseAnonKey!);

@@ -4,6 +4,13 @@ Aucune donnée nominative ne doit exister au-delà de cette étape (ni artefact,
 ni frontend). Le sel HMAC est lu depuis la variable d'environnement MASSAR_SALT ; à
 défaut, un sel local est généré et stocké hors dépôt (data/artifacts/.salt, gitignored)
 pour rester stable d'un run à l'autre sans jamais être committé.
+
+MASSAR_SALT, quand elle est définie, doit contenir la représentation
+HEXADÉCIMALE du sel (ex. produite par `bytes.hex()`), jamais le sel brut : ce
+sont 32 octets aléatoires (os.urandom), donc pas du texte valide — les coller
+tels quels dans un champ texte (ex. variables d'environnement Render) les
+corromprait. `data/artifacts/.salt` reste stocké en binaire brut, seule sa
+représentation hex transite par l'environnement.
 """
 from __future__ import annotations
 
@@ -31,7 +38,14 @@ AGE_BANDS = [
 def get_or_create_salt(salt_file: str = SALT_FILE_DEFAULT) -> bytes:
     env_salt = os.environ.get(SALT_ENV_VAR)
     if env_salt:
-        return env_salt.encode("utf-8")
+        try:
+            return bytes.fromhex(env_salt)
+        except ValueError as exc:
+            raise ValueError(
+                f"{SALT_ENV_VAR} doit être la représentation hexadécimale du sel "
+                f"(ex. 64 caractères [0-9a-f] pour 32 octets), pas le sel brut. "
+                f"Valeur reçue non-hexadécimale (longueur {len(env_salt)})."
+            ) from exc
     if os.path.exists(salt_file):
         with open(salt_file, "rb") as f:
             return f.read()
