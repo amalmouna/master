@@ -11,31 +11,35 @@ import { AMIRI_REGULAR_BASE64 } from "./fonts/amiri-base64";
  * Police Amiri (arabe + latin, SIL OFL, cf. fonts/OFL.txt) embarquée plutôt
  * que les polices intégrées de jsPDF (Helvetica etc., latin uniquement) :
  * les élèves réels de ce projet ont des noms en écriture arabe — sans ça,
- * le PDF les affiche en glyphes corrompus, illisibles. */
+ * le PDF les affiche en glyphes corrompus, illisibles.
+ *
+ * IMPORTANT — ne PAS pré-traiter le texte arabe soi-même. jsPDF a un plugin
+ * "arabic" interne (jsPDFAPI.processArabic) qui s'exécute automatiquement à
+ * CHAQUE appel de doc.text() (et donc aussi depuis jspdf-autotable, qui
+ * appelle doc.text() en interne) via un hook "preProcessText" — il fait le
+ * "shaping" (formes de lettres liées) ET le réordonnancement visuel
+ * droite-à-gauche tout seul. Vérifié empiriquement : passer la chaîne
+ * source brute donne l'ordre visuel correct (comparé caractère par
+ * caractère à la référence arabic-reshaper + python-bidi). Une tentative
+ * précédente rappelait processArabic() manuellement PUIS inversait la
+ * chaîne soi-même avant de la passer à autoTable — cela déclenchait le hook
+ * une seconde fois (processArabic reconnaît aussi le bloc Unicode "formes
+ * de présentation" en sortie) et inversait l'ordre une deuxième fois,
+ * annulant le premier réordonnancement : le nom entier apparaissait dans le
+ * bon sens de lecture MAIS lettre par lettre à l'envers dans chaque mot.
+ * Confirmé en comparant les positions x réelles des glyphes dans le PDF
+ * généré à la référence bidi, pas seulement "à l'œil". */
 const ARABIC_RANGE = /[؀-ۿݐ-ݿ]/;
-
-/** jsPDF.processArabic() ne fait que le "shaping" (formes initiale/médiane/
- * finale/isolée correctement liées) — pas l'inversion visuelle droite-à-
- * gauche, que jsPDF ne fait pas automatiquement pour du texte de tableau
- * (jspdf-autotable n'a aucun support RTL). Sans cette inversion, les lettres
- * sont bien liées mais dans le mauvais sens de lecture. Une simple
- * inversion de chaîne suffit ici : ce sont des noms/mots isolés, pas des
- * phrases mêlant arabe et ponctuation/chiffres latins qui demanderaient un
- * vrai algorithme bidi (Unicode UAX #9). */
-function shapeForPdf(doc: jsPDF, value: string): string {
-  if (!ARABIC_RANGE.test(value)) return value;
-  const shaped = doc.processArabic(value);
-  return [...shaped].reverse().join("");
-}
 
 /** Aligne à droite les cellules arabes (lecture RTL) plutôt que de les
  * laisser à gauche par défaut — sinon la mise en page suggère du texte
- * latin mal centré, alors que le contenu se lit dans l'autre sens. Détecté
- * sur la valeur d'origine : après shapeForPdf, les caractères sont dans le
- * bloc Unicode "formes de présentation arabes", pas celui testé ici. */
-function shapeCellForPdf(doc: jsPDF, cell: string | number): string | number | { content: string; styles: { halign: "right" } } {
+ * latin mal centré, alors que le contenu se lit dans l'autre sens. jsPDF
+ * gère le shaping/réordonnancement des glyphes tout seul (cf. note
+ * ci-dessus) ; ceci ne touche qu'à la position de la cellule, jamais au
+ * contenu texte lui-même. */
+function alignCellForPdf(cell: string | number): string | number | { content: string | number; styles: { halign: "right" } } {
   if (typeof cell !== "string" || !ARABIC_RANGE.test(cell)) return cell;
-  return { content: shapeForPdf(doc, cell), styles: { halign: "right" } };
+  return { content: cell, styles: { halign: "right" } };
 }
 
 export interface PdfTable {
@@ -66,12 +70,12 @@ export function buildPdf(title: string, subtitle: string, tables: PdfTable[]): A
     if (table.title) {
       cursorY += 16;
       doc.setFontSize(11);
-      doc.text(shapeForPdf(doc, table.title), marginLeft, cursorY);
+      doc.text(table.title, marginLeft, cursorY);
       cursorY += 6;
     }
     autoTable(doc, {
       head: [table.head],
-      body: table.body.map((row) => row.map((cell) => shapeCellForPdf(doc, cell))),
+      body: table.body.map((row) => row.map((cell) => alignCellForPdf(cell))),
       startY: cursorY + 6,
       margin: { left: marginLeft, right: marginLeft },
       styles: { fontSize: 8, cellPadding: 4, font: "Amiri" },
