@@ -28,6 +28,16 @@ function shapeForPdf(doc: jsPDF, value: string): string {
   return [...shaped].reverse().join("");
 }
 
+/** Aligne à droite les cellules arabes (lecture RTL) plutôt que de les
+ * laisser à gauche par défaut — sinon la mise en page suggère du texte
+ * latin mal centré, alors que le contenu se lit dans l'autre sens. Détecté
+ * sur la valeur d'origine : après shapeForPdf, les caractères sont dans le
+ * bloc Unicode "formes de présentation arabes", pas celui testé ici. */
+function shapeCellForPdf(doc: jsPDF, cell: string | number): string | number | { content: string; styles: { halign: "right" } } {
+  if (typeof cell !== "string" || !ARABIC_RANGE.test(cell)) return cell;
+  return { content: shapeForPdf(doc, cell), styles: { halign: "right" } };
+}
+
 export interface PdfTable {
   title?: string;
   head: string[];
@@ -61,9 +71,7 @@ export function buildPdf(title: string, subtitle: string, tables: PdfTable[]): A
     }
     autoTable(doc, {
       head: [table.head],
-      body: table.body.map((row) =>
-        row.map((cell) => (typeof cell === "string" ? shapeForPdf(doc, cell) : cell))
-      ),
+      body: table.body.map((row) => row.map((cell) => shapeCellForPdf(doc, cell))),
       startY: cursorY + 6,
       margin: { left: marginLeft, right: marginLeft },
       styles: { fontSize: 8, cellPadding: 4, font: "Amiri" },
