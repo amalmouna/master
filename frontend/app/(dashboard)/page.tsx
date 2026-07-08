@@ -1,6 +1,7 @@
 import { Users, AlertTriangle, TrendingUp, Layers, TriangleAlert } from "lucide-react";
 import { StatCard } from "@/components/ui/StatCard";
 import { FilterBar } from "@/components/filters/FilterBar";
+import { ExportLinks } from "@/components/export/ExportLinks";
 import {
   getAvailableAcademicYears,
   getDatasetIdsForYear,
@@ -170,6 +171,25 @@ export default async function OverviewPage({
           </table>
         </section>
       </div>
+
+      <section className="mt-6 rounded-lg border border-border bg-surface p-4">
+        <h2 className="text-sm font-semibold">Exports (§2.7)</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Listes exploitables pour diffusion interne — année sélectionnée ci-dessus.
+        </p>
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
+          <ExportLinks
+            label="Recommandations par classe"
+            csvHref={`/api/export/recommandations-par-classe?format=csv&annee=${encodeURIComponent(selectedAnnee)}`}
+            pdfHref={`/api/export/recommandations-par-classe?format=pdf&annee=${encodeURIComponent(selectedAnnee)}`}
+          />
+          <ExportLinks
+            label="Synthèse par niveau"
+            csvHref={`/api/export/synthese-par-niveau?format=csv&annee=${encodeURIComponent(selectedAnnee)}`}
+            pdfHref={`/api/export/synthese-par-niveau?format=pdf&annee=${encodeURIComponent(selectedAnnee)}`}
+          />
+        </div>
+      </section>
     </div>
   );
 }

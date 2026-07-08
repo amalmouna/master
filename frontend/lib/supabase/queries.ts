@@ -1,6 +1,6 @@
 import { createSupabaseServerClient } from "./server";
 import { fetchAllRows } from "./fetchAll";
-import type { Dataset, Subject, Grade, Student, ClusterRow, Prediction, RecommendationRow } from "./types";
+import type { Dataset, Subject, Grade, Student, ClusterRow, Prediction, RecommendationRow, Priorite } from "./types";
 
 const SEUIL_SIGNAL_ETABLISSEMENT = 50; // % d'élèves sous 10/20 dans une matière
 
@@ -575,4 +575,97 @@ export async function getStudentSubjectTrajectory(years: TrajectoryYear[]): Prom
       points: points.sort((a, b) => a.academic_year.localeCompare(b.academic_year)),
     }))
     .sort((a, b) => a.subject_nom_fr.localeCompare(b.subject_nom_fr));
+}
+
+export interface RecommendationExportRow {
+  niveau: string;
+  classe: string;
+  academic_year: string;
+  nom_complet: string | null;
+  student_pseudo: string;
+  priorite: Priorite;
+  type: string;
+  justification: string;
+  action: string;
+  matieres_concernees: string[];
+}
+
+/** Recommandations jointes aux élèves, pour l'export "plans de remédiation
+ * par classe" (§2.7). Les deux requêtes sont paginées (fetchAllRows) : le
+ * nombre de recommandations croît avec le nombre d'élèves (ex. 1003 lignes
+ * pour 481 élèves sur la cohorte réelle), largement au-delà du seuil de
+ * troncature silencieuse de PostgREST (1000 lignes). RLS s'applique
+ * normalement via createSupabaseServerClient — un scoped_user ne récupère
+ * que les élèves de ses classes, donc uniquement leurs recommandations. */
+export async function getRecommendationsForExport(datasetIds: string[]): Promise<RecommendationExportRow[]> {
+  if (datasetIds.length === 0) return [];
+  const supabase = await createSupabaseServerClient();
+  const [students, recommendations] = await Promise.all([
+    fetchAllRows<Pick<Student, "id" | "student_pseudo" | "nom_complet" | "niveau" | "classe" | "academic_year">>(
+      (from, to) =>
+        supabase
+          .from("students")
+          .select("id, student_pseudo, nom_complet, niveau, classe, academic_year")
+          .in("dataset_id", datasetIds)
+          .range(from, to)
+    ),
+    fetchAllRows<RecommendationRow>((from, to) =>
+      supabase.from("recommendations").select("*").in("dataset_id", datasetIds).range(from, to)
+    ),
+  ]);
+
+  const studentById = new Map(students.map((s) => [s.id, s]));
+
+  return recommendations
+    .map((r) => {
+      const s = studentById.get(r.student_id);
+      if (!s) return null;
+      return {
+        niveau: s.niveau,
+        classe: s.classe,
+        academic_year: s.academic_year,
+        nom_complet: s.nom_complet,
+        student_pseudo: s.student_pseudo,
+        priorite: r.priorite,
+        type: r.type,
+        justification: r.justification,
+        action: r.action,
+        matieres_concernees: r.matieres_concernees,
+      };
+    })
+    .filter((r): r is RecommendationExportRow => r !== null)
+    .sort((a, b) => a.classe.localeCompare(b.classe) || a.priorite - b.priorite);
+}
+
+export interface NiveauSynthese {
+  niveau: string;
+  n_eleves: number;
+  n_a_risque: number;
+  pct_a_risque: number;
+  moyenne_generale: number | null;
+}
+
+/** Synthèse par niveau pour l'export (§2.7) — même agrégat que
+ * getRiskSummary mais sans la moyenne globale toutes années, ce qui suffit
+ * ici. Réutilise getStudentsJoined (déjà paginé), pas de nouvelle requête
+ * brute à paginer soi-même. */
+export async function getNiveauSynthese(datasetIds: string[]): Promise<NiveauSynthese[]> {
+  const students = await getStudentsJoined(datasetIds);
+  const groups = new Map<string, StudentJoined[]>();
+  for (const s of students) {
+    (groups.get(s.niveau) ?? groups.set(s.niveau, []).get(s.niveau)!).push(s);
+  }
+  return [...groups.entries()]
+    .map(([niveau, group]) => {
+      const moyennes = group.map((s) => s.moyenne_generale).filter((v): v is number => v !== null);
+      const nARisque = group.filter((s) => s.a_risque).length;
+      return {
+        niveau,
+        n_eleves: group.length,
+        n_a_risque: nARisque,
+        pct_a_risque: group.length > 0 ? (100 * nARisque) / group.length : 0,
+        moyenne_generale: moyennes.length > 0 ? moyennes.reduce((a, b) => a + b, 0) / moyennes.length : null,
+      };
+    })
+    .sort((a, b) => a.niveau.localeCompare(b.niveau));
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { FilterBar } from "@/components/filters/FilterBar";
+import { ExportLinks } from "@/components/export/ExportLinks";
 import {
   getAvailableAcademicYears,
   getDatasetIdsForYear,
@@ -59,7 +60,7 @@ export default async function RisquePage({
       </div>
       <p className="mt-1 text-xs text-muted-foreground">Élèves à risque uniquement.</p>
 
-      <div className="mt-4">
+      <div className="mt-4 flex items-center justify-between">
         <FilterBar
           niveaux={options.niveaux}
           classesByNiveau={options.classesByNiveau}
@@ -67,6 +68,10 @@ export default async function RisquePage({
           anneesScolaires={anneesScolaires}
           selectedAnnee={selectedAnnee}
           enabled={{ annee: true, niveau: true, classe: true, profil: false }}
+        />
+        <ExportLinks
+          csvHref={`/api/export/eleves-a-risque?format=csv&annee=${encodeURIComponent(selectedAnnee)}${niveau ? `&niveau=${encodeURIComponent(niveau)}` : ""}${classe ? `&classe=${encodeURIComponent(classe)}` : ""}`}
+          pdfHref={`/api/export/eleves-a-risque?format=pdf&annee=${encodeURIComponent(selectedAnnee)}${niveau ? `&niveau=${encodeURIComponent(niveau)}` : ""}${classe ? `&classe=${encodeURIComponent(classe)}` : ""}`}
         />
       </div>
 
