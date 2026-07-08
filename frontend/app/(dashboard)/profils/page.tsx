@@ -1,7 +1,9 @@
 import { FilterBar } from "@/components/filters/FilterBar";
 import { ClusterScatter, ClusterLegend } from "@/components/profils/ClusterScatter";
 import {
-  getLatestDataset,
+  getAvailableAcademicYears,
+  getDatasetIdsForYear,
+  resolveSelectedAnnee,
   getStudentsJoined,
   getFilterOptions,
   getClusterPoints,
@@ -11,12 +13,12 @@ import {
 export default async function ProfilsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ niveau?: string; classe?: string }>;
+  searchParams: Promise<{ niveau?: string; classe?: string; annee?: string }>;
 }) {
-  const { niveau, classe } = await searchParams;
-  const dataset = await getLatestDataset();
+  const { niveau, classe, annee } = await searchParams;
+  const anneesScolaires = await getAvailableAcademicYears();
 
-  if (!dataset) {
+  if (anneesScolaires.length === 0) {
     return (
       <div className="p-8">
         <h1 className="text-lg font-semibold">Profils</h1>
@@ -25,9 +27,12 @@ export default async function ProfilsPage({
     );
   }
 
+  const selectedAnnee = resolveSelectedAnnee(annee, anneesScolaires);
+  const datasetIds = await getDatasetIdsForYear(selectedAnnee);
+
   const [students, points] = await Promise.all([
-    getStudentsJoined(dataset.id),
-    getClusterPoints(dataset.id),
+    getStudentsJoined(datasetIds),
+    getClusterPoints(datasetIds),
   ]);
   const options = getFilterOptions(students);
 
@@ -47,7 +52,9 @@ export default async function ProfilsPage({
           niveaux={options.niveaux}
           classesByNiveau={options.classesByNiveau}
           profils={options.profils}
-          enabled={{ niveau: true, classe: true }}
+          anneesScolaires={anneesScolaires}
+          selectedAnnee={selectedAnnee}
+          enabled={{ annee: true, niveau: true, classe: true }}
         />
       </div>
 

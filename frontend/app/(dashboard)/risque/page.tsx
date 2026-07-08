@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { FilterBar } from "@/components/filters/FilterBar";
 import {
-  getLatestDataset,
+  getAvailableAcademicYears,
+  getDatasetIdsForYear,
+  resolveSelectedAnnee,
   getStudentsJoined,
   getFilterOptions,
   applyStudentFilters,
@@ -16,12 +18,12 @@ interface AtRiskRow extends StudentJoined {
 export default async function RisquePage({
   searchParams,
 }: {
-  searchParams: Promise<{ niveau?: string; classe?: string }>;
+  searchParams: Promise<{ niveau?: string; classe?: string; annee?: string }>;
 }) {
-  const { niveau, classe } = await searchParams;
-  const dataset = await getLatestDataset();
+  const { niveau, classe, annee } = await searchParams;
+  const anneesScolaires = await getAvailableAcademicYears();
 
-  if (!dataset) {
+  if (anneesScolaires.length === 0) {
     return (
       <div className="p-8">
         <h1 className="text-lg font-semibold">Élèves à risque</h1>
@@ -30,9 +32,12 @@ export default async function RisquePage({
     );
   }
 
+  const selectedAnnee = resolveSelectedAnnee(annee, anneesScolaires);
+  const datasetIds = await getDatasetIdsForYear(selectedAnnee);
+
   const [students, predictions] = await Promise.all([
-    getStudentsJoined(dataset.id),
-    getPredictionsByStudent(dataset.id),
+    getStudentsJoined(datasetIds),
+    getPredictionsByStudent(datasetIds),
   ]);
   const options = getFilterOptions(students);
 
@@ -59,7 +64,9 @@ export default async function RisquePage({
           niveaux={options.niveaux}
           classesByNiveau={options.classesByNiveau}
           profils={options.profils}
-          enabled={{ niveau: true, classe: true, profil: false }}
+          anneesScolaires={anneesScolaires}
+          selectedAnnee={selectedAnnee}
+          enabled={{ annee: true, niveau: true, classe: true, profil: false }}
         />
       </div>
 
@@ -68,6 +75,7 @@ export default async function RisquePage({
           <thead>
             <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
               <th className="px-4 py-2 font-medium">Élève</th>
+              <th className="px-4 py-2 font-medium">Année</th>
               <th className="px-4 py-2 font-medium">Niveau</th>
               <th className="px-4 py-2 font-medium">Classe</th>
               <th className="px-4 py-2 font-medium">Profil</th>
@@ -78,7 +86,7 @@ export default async function RisquePage({
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">
+                <td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">
                   Aucun élève à risque dans ce périmètre.
                 </td>
               </tr>
@@ -87,12 +95,13 @@ export default async function RisquePage({
               <tr key={s.id} className="border-t border-border hover:bg-background">
                 <td className="px-4 py-2">
                   <Link
-                    href={`/eleves/${s.student_pseudo}`}
+                    href={`/eleves/${s.student_pseudo}?annee=${encodeURIComponent(s.academic_year)}`}
                     className="font-medium text-accent hover:underline"
                   >
                     {s.nom_complet ?? s.student_pseudo.slice(0, 8)}
                   </Link>
                 </td>
+                <td className="px-4 py-2 text-muted-foreground">{s.academic_year}</td>
                 <td className="px-4 py-2 text-muted-foreground">{s.niveau}</td>
                 <td className="px-4 py-2 text-muted-foreground">{s.classe}</td>
                 <td className="px-4 py-2 text-muted-foreground">{s.cluster_label ?? "—"}</td>

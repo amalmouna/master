@@ -1,7 +1,12 @@
 import { redirect } from "next/navigation";
 import { getCurrentUserRole } from "@/lib/supabase/roles";
 import { listManagedUsers } from "@/lib/supabase/admin";
-import { getLatestDataset, getStudentsJoined, getFilterOptions } from "@/lib/supabase/queries";
+import {
+  getDatasetIdsForYear,
+  getStudentsJoined,
+  getFilterOptions,
+  TOUTES_LES_ANNEES,
+} from "@/lib/supabase/queries";
 import { CreateUserForm } from "@/components/admin/CreateUserForm";
 import { UsersTable } from "@/components/admin/UsersTable";
 
@@ -11,8 +16,12 @@ export default async function UtilisateursPage() {
     redirect("/");
   }
 
-  const dataset = await getLatestDataset();
-  const students = dataset ? await getStudentsJoined(dataset.id) : [];
+  // Toutes les années : une classe assignable à un scoped_user doit rester
+  // proposée même si elle n'apparaît que dans un import passé (cf. §10 —
+  // un scoped_user assigné à une classe la voit pour toutes les années où
+  // elle apparaît, pas seulement le dernier import).
+  const datasetIds = await getDatasetIdsForYear(TOUTES_LES_ANNEES);
+  const students = await getStudentsJoined(datasetIds);
   const options = getFilterOptions(students);
   const allClasses = Object.values(options.classesByNiveau).flat().sort();
 

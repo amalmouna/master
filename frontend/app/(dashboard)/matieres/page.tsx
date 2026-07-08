@@ -1,6 +1,8 @@
 import { FilterBar } from "@/components/filters/FilterBar";
 import {
-  getLatestDataset,
+  getAvailableAcademicYears,
+  getDatasetIdsForYear,
+  resolveSelectedAnnee,
   getStudentsJoined,
   getFilterOptions,
   applyStudentFilters,
@@ -11,12 +13,12 @@ import { DOMAINE_FR } from "@/lib/constants";
 export default async function MatieresPage({
   searchParams,
 }: {
-  searchParams: Promise<{ niveau?: string; classe?: string; profil?: string }>;
+  searchParams: Promise<{ niveau?: string; classe?: string; profil?: string; annee?: string }>;
 }) {
-  const { niveau, classe, profil } = await searchParams;
-  const dataset = await getLatestDataset();
+  const { niveau, classe, profil, annee } = await searchParams;
+  const anneesScolaires = await getAvailableAcademicYears();
 
-  if (!dataset) {
+  if (anneesScolaires.length === 0) {
     return (
       <div className="p-8">
         <h1 className="text-lg font-semibold">Moyennes par matière</h1>
@@ -25,11 +27,14 @@ export default async function MatieresPage({
     );
   }
 
-  const students = await getStudentsJoined(dataset.id);
+  const selectedAnnee = resolveSelectedAnnee(annee, anneesScolaires);
+  const datasetIds = await getDatasetIdsForYear(selectedAnnee);
+
+  const students = await getStudentsJoined(datasetIds);
   const options = getFilterOptions(students);
   const filtered = applyStudentFilters(students, { niveau, classe, profil });
   const filteredIds = new Set(filtered.map((s) => s.id));
-  const signals = await getSubjectSignals(dataset.id, filteredIds);
+  const signals = await getSubjectSignals(datasetIds, filteredIds);
 
   return (
     <div className="p-8 max-w-4xl">
@@ -43,7 +48,9 @@ export default async function MatieresPage({
           niveaux={options.niveaux}
           classesByNiveau={options.classesByNiveau}
           profils={options.profils}
-          enabled={{ niveau: true, classe: true, profil: true }}
+          anneesScolaires={anneesScolaires}
+          selectedAnnee={selectedAnnee}
+          enabled={{ annee: true, niveau: true, classe: true, profil: true }}
         />
       </div>
 

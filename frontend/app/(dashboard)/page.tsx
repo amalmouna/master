@@ -1,16 +1,27 @@
 import { Users, AlertTriangle, TrendingUp, Layers, TriangleAlert } from "lucide-react";
 import { StatCard } from "@/components/ui/StatCard";
+import { FilterBar } from "@/components/filters/FilterBar";
 import {
-  getLatestDataset,
+  getAvailableAcademicYears,
+  getDatasetIdsForYear,
+  resolveSelectedAnnee,
+  getStudentsJoined,
+  getFilterOptions,
   getRiskSummary,
   getSubjectSignals,
   extractEtablissementSignals,
+  TOUTES_LES_ANNEES,
 } from "@/lib/supabase/queries";
 
-export default async function OverviewPage() {
-  const dataset = await getLatestDataset();
+export default async function OverviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ annee?: string }>;
+}) {
+  const { annee } = await searchParams;
+  const anneesScolaires = await getAvailableAcademicYears();
 
-  if (!dataset) {
+  if (anneesScolaires.length === 0) {
     return (
       <div className="p-8">
         <h1 className="text-lg font-semibold">Vue d&apos;ensemble</h1>
@@ -22,17 +33,38 @@ export default async function OverviewPage() {
     );
   }
 
-  const [risk, subjectSignals] = await Promise.all([
-    getRiskSummary(dataset.id),
-    getSubjectSignals(dataset.id),
+  const selectedAnnee = resolveSelectedAnnee(annee, anneesScolaires);
+  const datasetIds = await getDatasetIdsForYear(selectedAnnee);
+
+  const [students, risk, subjectSignals] = await Promise.all([
+    getStudentsJoined(datasetIds),
+    getRiskSummary(datasetIds),
+    getSubjectSignals(datasetIds),
   ]);
   const etablissementSignals = extractEtablissementSignals(subjectSignals);
-  const niveaux = dataset.quality_summary?.niveaux ?? [];
-  const classes = dataset.quality_summary?.classes ?? [];
+  const options = getFilterOptions(students);
 
   return (
     <div className="p-8 max-w-6xl">
-      <h1 className="text-lg font-semibold">Vue d&apos;ensemble</h1>
+      <div className="flex items-baseline justify-between">
+        <h1 className="text-lg font-semibold">Vue d&apos;ensemble</h1>
+        {selectedAnnee === TOUTES_LES_ANNEES && (
+          <span className="text-xs text-muted-foreground">
+            Toutes années confondues — un élève déjà importé plusieurs années compte une fois par année.
+          </span>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <FilterBar
+          niveaux={options.niveaux}
+          classesByNiveau={options.classesByNiveau}
+          profils={options.profils}
+          anneesScolaires={anneesScolaires}
+          selectedAnnee={selectedAnnee}
+          enabled={{ annee: true }}
+        />
+      </div>
 
       <div className="mt-6 grid grid-cols-4 gap-4">
         <StatCard icon={Users} label="Élèves" value={String(risk.n_eleves)} />
@@ -51,8 +83,8 @@ export default async function OverviewPage() {
         <StatCard
           icon={Layers}
           label="Périmètre"
-          value={`${niveaux.length} niveaux`}
-          sublabel={`${classes.length} classes`}
+          value={`${options.niveaux.length} niveaux`}
+          sublabel={`${Object.values(options.classesByNiveau).flat().length} classes`}
         />
       </div>
 

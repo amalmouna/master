@@ -1,8 +1,15 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { PrioriteBadge } from "@/components/ui/PrioriteBadge";
+import { Trajectory } from "@/components/eleves/Trajectory";
 import { DOMAINE_FR } from "@/lib/constants";
-import { getLatestDataset, getStudentDetail } from "@/lib/supabase/queries";
+import {
+  getAvailableAcademicYears,
+  resolveSelectedAnnee,
+  getStudentDetailByYear,
+  getStudentTrajectory,
+  getStudentSubjectTrajectory,
+} from "@/lib/supabase/queries";
 
 function formatNote(v: number | null): string {
   return v !== null ? v.toFixed(2) : "—";
@@ -10,13 +17,16 @@ function formatNote(v: number | null): string {
 
 export default async function FicheElevePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ pseudo: string }>;
+  searchParams: Promise<{ annee?: string }>;
 }) {
   const { pseudo } = await params;
-  const dataset = await getLatestDataset();
+  const { annee } = await searchParams;
+  const anneesScolaires = await getAvailableAcademicYears();
 
-  if (!dataset) {
+  if (anneesScolaires.length === 0) {
     return (
       <div className="p-8">
         <p className="text-sm text-muted-foreground">Aucun import chargé.</p>
@@ -24,7 +34,13 @@ export default async function FicheElevePage({
     );
   }
 
-  const detail = await getStudentDetail(dataset.id, pseudo);
+  // Pas de "toutes les années" ici : la fiche montre un instantané précis.
+  // Si le lien d'origine indiquait TOUTES_LES_ANNEES par erreur, on retombe
+  // sur l'année la plus récente plutôt que d'échouer silencieusement.
+  const selectedAnnee =
+    annee && anneesScolaires.includes(annee) ? annee : resolveSelectedAnnee(undefined, anneesScolaires);
+
+  const detail = await getStudentDetailByYear(pseudo, selectedAnnee);
 
   if (!detail) {
     return (
@@ -32,12 +48,17 @@ export default async function FicheElevePage({
         <Link href="/risque" className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline">
           <ArrowLeft size={14} /> Retour
         </Link>
-        <p className="mt-4 text-sm text-muted-foreground">Élève introuvable dans cet import.</p>
+        <p className="mt-4 text-sm text-muted-foreground">
+          Élève introuvable pour l&apos;année {selectedAnnee}.
+        </p>
       </div>
     );
   }
 
   const { student, cluster_label, prediction, grades, recommendations } = detail;
+
+  const trajectoryYears = await getStudentTrajectory(pseudo);
+  const subjectTrajectory = await getStudentSubjectTrajectory(trajectoryYears);
 
   return (
     <div className="p-8 max-w-4xl">
@@ -56,7 +77,7 @@ export default async function FicheElevePage({
         </span>
       </div>
       <p className="mt-1 text-xs text-muted-foreground">
-        {student.niveau} — {student.classe}
+        Année {student.academic_year} · {student.niveau} — {student.classe}
         {cluster_label && <> · Profil {cluster_label}</>}
         {student.age !== null && <> · {student.age} ans</>}
       </p>
@@ -170,6 +191,8 @@ export default async function FicheElevePage({
           </div>
         )}
       </section>
+
+      <Trajectory years={trajectoryYears} subjects={subjectTrajectory} />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { Upload, Loader2, CheckCircle, AlertTriangle, RefreshCw, FileX } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
@@ -173,12 +174,12 @@ export function ImportForm() {
           </div>
         )}
         <div className="mt-4 flex gap-2">
-          <a
+          <Link
             href="/"
             className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-foreground"
           >
             Voir le tableau de bord
-          </a>
+          </Link>
           <button
             type="button"
             onClick={handleReset}

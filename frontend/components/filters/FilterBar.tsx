@@ -8,14 +8,31 @@ export interface FilterBarProps {
   profils: string[];
   /** Filtres pertinents pour la page courante — une page n'active que ceux
    * qui ont un sens (ex. pas de filtre "profil" sur la page Moyennes). */
-  enabled: { niveau?: boolean; classe?: boolean; profil?: boolean };
+  enabled: { niveau?: boolean; classe?: boolean; profil?: boolean; annee?: boolean };
+  /** Années disponibles (plus récente en premier) — requis si enabled.annee. */
+  anneesScolaires?: string[];
+  /** Valeur actuellement sélectionnée pour l'année : soit une année précise,
+   * soit la sentinelle "toutes" (TOUTES_LES_ANNEES, lib/supabase/queries.ts).
+   * Résolue par la page appelante (absence de paramètre URL = année la plus
+   * récente), pas dérivée ici — contrairement aux autres filtres, l'année
+   * n'a pas de "vide = tout" implicite. */
+  selectedAnnee?: string;
 }
 
-/** Barre de filtres partagée (niveau / classe / profil), pilotée par l'URL
- * (searchParams) pour rester cohérente entre pages Server Components et
- * navigable/partageable par lien. La classe se réinitialise si le niveau
+const TOUTES_LES_ANNEES = "toutes";
+
+/** Barre de filtres partagée (année / niveau / classe / profil), pilotée par
+ * l'URL (searchParams) pour rester cohérente entre pages Server Components
+ * et navigable/partageable par lien. La classe se réinitialise si le niveau
  * change et ne correspond plus. */
-export function FilterBar({ niveaux, classesByNiveau, profils, enabled }: FilterBarProps) {
+export function FilterBar({
+  niveaux,
+  classesByNiveau,
+  profils,
+  enabled,
+  anneesScolaires = [],
+  selectedAnnee = "",
+}: FilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -33,10 +50,24 @@ export function FilterBar({ niveaux, classesByNiveau, profils, enabled }: Filter
     router.push(`${pathname}?${params.toString()}`);
   }
 
-  const hasActiveFilters = niveau || classe || profil;
+  const hasActiveFilters = niveau || classe || profil || searchParams.get("annee");
 
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2">
+      {enabled.annee && (
+        <select
+          value={selectedAnnee}
+          onChange={(e) => updateParam("annee", e.target.value)}
+          className="rounded-md border border-border bg-background px-2 py-1 text-sm font-medium text-foreground"
+        >
+          {anneesScolaires.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+          <option value={TOUTES_LES_ANNEES}>Toutes les années</option>
+        </select>
+      )}
       {enabled.niveau && (
         <select
           value={niveau}

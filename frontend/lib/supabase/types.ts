@@ -57,6 +57,7 @@ export interface Student {
   id: string;
   dataset_id: string;
   student_pseudo: string; // hash stable — clé technique, jamais le code national
+  academic_year: string; // stable à travers les années (même sel) : lie l'historique d'un élève
   nom_complet: string | null; // nom réel (architecture privée/authentifiée, cf. supabase/schema.sql)
   age: number | null;
   niveau: string;

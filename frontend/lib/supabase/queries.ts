@@ -7,6 +7,7 @@ const SEUIL_SIGNAL_ETABLISSEMENT = 50; // % d'élèves sous 10/20 dans une mati�
 export interface StudentJoined {
   id: string;
   student_pseudo: string;
+  academic_year: string;
   nom_complet: string | null;
   niveau: string;
   classe: string;
@@ -16,20 +17,28 @@ export interface StudentJoined {
   cluster_label: string | null;
 }
 
-/** Élèves + profil de cluster joints en mémoire (~500 lignes, un seul aller-
- * retour paginé par table) — base commune pour toutes les pages filtrables
- * par niveau/classe/profil. Évite de refaire une jointure PostgREST par page. */
-export async function getStudentsJoined(datasetId: string): Promise<StudentJoined[]> {
+/** Élèves + profil de cluster joints en mémoire (~500 lignes par année, un
+ * seul aller-retour paginé par table) — base commune pour toutes les pages
+ * filtrables par niveau/classe/profil. Évite de refaire une jointure
+ * PostgREST par page.
+ *
+ * `datasetIds` — un ou plusieurs imports (§10, imports additifs multi-
+ * années) : un seul id pour une année donnée, plusieurs pour "toutes les
+ * années" (cf. getDatasetIdsForYear). Un même élève réapparaît une fois par
+ * année où il a été importé — pas de déduplication inter-années ici, chaque
+ * ligne `students` est un instantané propre à son import. */
+export async function getStudentsJoined(datasetIds: string[]): Promise<StudentJoined[]> {
+  if (datasetIds.length === 0) return [];
   const supabase = await createSupabaseServerClient();
   const [students, clusters] = await Promise.all([
     fetchAllRows<Student>((from, to) =>
-      supabase.from("students").select("*").eq("dataset_id", datasetId).range(from, to)
+      supabase.from("students").select("*").in("dataset_id", datasetIds).range(from, to)
     ),
     fetchAllRows<Pick<ClusterRow, "student_id" | "cluster_label">>((from, to) =>
       supabase
         .from("clusters")
         .select("student_id, cluster_label")
-        .eq("dataset_id", datasetId)
+        .in("dataset_id", datasetIds)
         .range(from, to)
     ),
   ]);
@@ -39,6 +48,7 @@ export async function getStudentsJoined(datasetId: string): Promise<StudentJoine
   return students.map((s) => ({
     id: s.id,
     student_pseudo: s.student_pseudo,
+    academic_year: s.academic_year,
     nom_complet: s.nom_complet,
     niveau: s.niveau,
     classe: s.classe,
@@ -107,6 +117,49 @@ export async function getLatestDataset(): Promise<Dataset | null> {
   return data as Dataset | null;
 }
 
+/** Sentinelle du filtre "année scolaire" pour agréger tous les imports —
+ * jamais confondu avec un `annee_scolaire` réel (format 'AAAA/AAAA'). */
+export const TOUTES_LES_ANNEES = "toutes";
+
+/** Années scolaires disponibles, triées de la plus récente à la plus
+ * ancienne — sert à peupler le filtre et à déterminer la valeur par défaut
+ * (la plus récente), distincte du filtre "toutes les années" qui doit être
+ * choisi explicitement. */
+export async function getAvailableAcademicYears(): Promise<string[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("datasets").select("annee_scolaire");
+  if (error) throw new Error(`getAvailableAcademicYears: ${error.message}`);
+  const years = new Set(
+    (data ?? [])
+      .map((d) => (d as { annee_scolaire: string | null }).annee_scolaire)
+      .filter((y): y is string => y !== null)
+  );
+  return [...years].sort().reverse();
+}
+
+/** Résout un filtre année scolaire (valeur d'URL, sentinelle TOUTES_LES_ANNEES
+ * ou année précise) en la liste des dataset_id correspondants — plusieurs
+ * imports peuvent en théorie partager la même annee_scolaire (ex. deux
+ * semestres importés séparément), d'où un tableau même pour une année précise. */
+export async function getDatasetIdsForYear(year: string): Promise<string[]> {
+  const supabase = await createSupabaseServerClient();
+  let query = supabase.from("datasets").select("id");
+  if (year !== TOUTES_LES_ANNEES) query = query.eq("annee_scolaire", year);
+  const { data, error } = await query;
+  if (error) throw new Error(`getDatasetIdsForYear: ${error.message}`);
+  return (data ?? []).map((d) => (d as { id: string }).id);
+}
+
+/** Résout le paramètre d'URL `annee` en valeur effective : absent -> année la
+ * plus récente (jamais "toutes les années" par défaut, qui doit être choisi
+ * explicitement) ; sinon la valeur telle quelle (année précise ou
+ * TOUTES_LES_ANNEES). Si aucun import n'existe encore, retombe sur
+ * TOUTES_LES_ANNEES (sans effet : getDatasetIdsForYear renverra alors []). */
+export function resolveSelectedAnnee(anneeParam: string | undefined, availableYears: string[]): string {
+  if (anneeParam) return anneeParam;
+  return availableYears[0] ?? TOUTES_LES_ANNEES;
+}
+
 export interface RiskByNiveau {
   niveau: string;
   n: number;
@@ -122,17 +175,21 @@ export interface RiskSummary {
   par_niveau: RiskByNiveau[];
 }
 
-/** Prévalence du risque, globale et par niveau, calculée sur les élèves du
- * dataset (agrégation en mémoire : ~500 lignes, largement dans le budget d'un
- * rendu serveur — pas besoin de RPC/vue dédiée à ce volume). */
-export async function getRiskSummary(datasetId: string): Promise<RiskSummary> {
+/** Prévalence du risque, globale et par niveau, calculée sur les élèves des
+ * dataset(s) sélectionnés (agrégation en mémoire : ~500 lignes par année,
+ * largement dans le budget d'un rendu serveur — pas besoin de RPC/vue
+ * dédiée à ce volume). */
+export async function getRiskSummary(datasetIds: string[]): Promise<RiskSummary> {
+  if (datasetIds.length === 0) {
+    return { n_eleves: 0, n_a_risque: 0, pct_a_risque: 0, moyenne_generale: null, par_niveau: [] };
+  }
   const supabase = await createSupabaseServerClient();
   const students = await fetchAllRows<Pick<Student, "niveau" | "a_risque" | "moyenne_generale">>(
     (from, to) =>
       supabase
         .from("students")
         .select("niveau, a_risque, moyenne_generale")
-        .eq("dataset_id", datasetId)
+        .in("dataset_id", datasetIds)
         .range(from, to)
   );
 
@@ -186,9 +243,10 @@ export interface SubjectSignal {
  * fourni, restreint l'agrégat à un sous-ensemble d'élèves déjà filtré
  * (niveau/classe/profil) par l'appelant via applyStudentFilters. */
 export async function getSubjectSignals(
-  datasetId: string,
+  datasetIds: string[],
   studentIds?: Set<string>
 ): Promise<SubjectSignal[]> {
+  if (datasetIds.length === 0) return [];
   const supabase = await createSupabaseServerClient();
   const { data: subjectsData, error: subjectsError } = await supabase.from("subjects").select("*");
   if (subjectsError) throw new Error(`getSubjectSignals (subjects): ${subjectsError.message}`);
@@ -199,7 +257,7 @@ export async function getSubjectSignals(
       supabase
         .from("grades")
         .select("student_id, subject_code, moyenne_matiere")
-        .eq("dataset_id", datasetId)
+        .in("dataset_id", datasetIds)
         .range(from, to)
   );
 
@@ -258,7 +316,8 @@ export type PredictionSummary = Pick<
 >;
 
 /** Sorties des modèles retenus (Logistic Regression, Ridge), indexées par élève. */
-export async function getPredictionsByStudent(datasetId: string): Promise<Map<string, PredictionSummary>> {
+export async function getPredictionsByStudent(datasetIds: string[]): Promise<Map<string, PredictionSummary>> {
+  if (datasetIds.length === 0) return new Map();
   const supabase = await createSupabaseServerClient();
   const predictions = await fetchAllRows<
     Pick<
@@ -273,7 +332,7 @@ export async function getPredictionsByStudent(datasetId: string): Promise<Map<st
     supabase
       .from("predictions")
       .select("student_id, probabilite_risque, moyenne_generale_predite, explication_risque_fr, explication_moyenne_fr")
-      .eq("dataset_id", datasetId)
+      .in("dataset_id", datasetIds)
       .range(from, to)
   );
   return new Map(predictions.map((p) => [p.student_id, p]));
@@ -297,14 +356,15 @@ export interface ClusterPoint {
  * caractérise donc chaque cluster avec ce qui est disponible ici
  * (moyenne_generale, dispersion, taux de risque), pas les features exactes
  * du modèle. */
-export async function getClusterPoints(datasetId: string): Promise<ClusterPoint[]> {
+export async function getClusterPoints(datasetIds: string[]): Promise<ClusterPoint[]> {
+  if (datasetIds.length === 0) return [];
   const supabase = await createSupabaseServerClient();
   const [clusters, students] = await Promise.all([
     fetchAllRows<Pick<ClusterRow, "student_id" | "cluster_label" | "pca_1" | "pca_2">>((from, to) =>
       supabase
         .from("clusters")
         .select("student_id, cluster_label, pca_1, pca_2")
-        .eq("dataset_id", datasetId)
+        .in("dataset_id", datasetIds)
         .range(from, to)
     ),
     fetchAllRows<Pick<Student, "id" | "niveau" | "classe" | "moyenne_generale" | "dispersion_intermatiere" | "a_risque">>(
@@ -312,7 +372,7 @@ export async function getClusterPoints(datasetId: string): Promise<ClusterPoint[
         supabase
           .from("students")
           .select("id, niveau, classe, moyenne_generale, dispersion_intermatiere, a_risque")
-          .eq("dataset_id", datasetId)
+          .in("dataset_id", datasetIds)
           .range(from, to)
     ),
   ]);
@@ -389,17 +449,22 @@ export interface StudentDetail {
   recommendations: RecommendationRow[];
 }
 
-/** Fiche élève complète. Un seul élève scopé par dataset+pseudo (pas de
- * pagination nécessaire : au plus 7 notes et quelques recommandations). */
-export async function getStudentDetail(datasetId: string, pseudo: string): Promise<StudentDetail | null> {
+/** Fiche élève complète pour une année scolaire précise. Un seul élève
+ * scopé par (pseudo, academic_year) — la contrainte unique
+ * students_pseudo_academic_year_unique garantit au plus une ligne, donc pas
+ * besoin de passer par dataset_id : ça reste correct même si une année
+ * finissait par recouvrir plusieurs imports. Pas de pagination nécessaire
+ * (au plus 7 notes et quelques recommandations) — RLS (classe) s'applique
+ * normalement via createSupabaseServerClient. */
+export async function getStudentDetailByYear(pseudo: string, academicYear: string): Promise<StudentDetail | null> {
   const supabase = await createSupabaseServerClient();
   const { data: studentData, error: studentError } = await supabase
     .from("students")
     .select("*")
-    .eq("dataset_id", datasetId)
     .eq("student_pseudo", pseudo)
+    .eq("academic_year", academicYear)
     .maybeSingle();
-  if (studentError) throw new Error(`getStudentDetail (student): ${studentError.message}`);
+  if (studentError) throw new Error(`getStudentDetailByYear (student): ${studentError.message}`);
   if (!studentData) return null;
   const student = studentData as Student;
 
@@ -429,4 +494,85 @@ export async function getStudentDetail(datasetId: string, pseudo: string): Promi
     grades,
     recommendations: (recsRes.data ?? []) as RecommendationRow[],
   };
+}
+
+export interface TrajectoryYear {
+  student_id: string;
+  academic_year: string;
+  niveau: string;
+  classe: string;
+  moyenne_generale: number | null;
+  a_risque: boolean;
+}
+
+/** Historique d'un élève à travers les années — student_pseudo est stable
+ * (même sel HMAC, cf. anonymization/anonymize.py), donc une simple requête
+ * par pseudo suffit à retrouver toutes ses lignes `students`, une par année
+ * importée. Pas de pagination : au plus une poignée d'années par élève, ça
+ * ne grossit jamais avec le nombre total d'élèves de l'établissement. RLS
+ * (classe) s'applique ligne par ligne : un scoped_user ne voit que les
+ * années où CET élève était dans une classe qui lui est assignée. */
+export async function getStudentTrajectory(pseudo: string): Promise<TrajectoryYear[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("students")
+    .select("id, academic_year, niveau, classe, moyenne_generale, a_risque")
+    .eq("student_pseudo", pseudo)
+    .order("academic_year", { ascending: true });
+  if (error) throw new Error(`getStudentTrajectory: ${error.message}`);
+  return (data ?? []).map((s) => ({
+    student_id: (s as { id: string }).id,
+    academic_year: (s as { academic_year: string }).academic_year,
+    niveau: (s as { niveau: string }).niveau,
+    classe: (s as { classe: string }).classe,
+    moyenne_generale: (s as { moyenne_generale: number | null }).moyenne_generale,
+    a_risque: (s as { a_risque: boolean }).a_risque,
+  }));
+}
+
+export interface SubjectTrajectory {
+  subject_code: string;
+  subject_nom_fr: string;
+  points: { academic_year: string; moyenne_matiere: number | null }[];
+}
+
+/** Moyenne par matière, une série par année, pour les `student_id` déjà
+ * résolus par getStudentTrajectory (un id différent par année — chaque
+ * import crée une nouvelle ligne `students`/`grades`, liées entre elles par
+ * student_pseudo, pas par un id élève partagé). Pas de pagination : au plus
+ * (nb années × 7 matières) lignes pour un seul élève. */
+export async function getStudentSubjectTrajectory(years: TrajectoryYear[]): Promise<SubjectTrajectory[]> {
+  if (years.length === 0) return [];
+  const supabase = await createSupabaseServerClient();
+  const yearByStudentId = new Map(years.map((y) => [y.student_id, y.academic_year]));
+  const studentIds = years.map((y) => y.student_id);
+
+  const [gradesRes, subjectsRes] = await Promise.all([
+    supabase
+      .from("grades")
+      .select("student_id, subject_code, moyenne_matiere")
+      .in("student_id", studentIds),
+    supabase.from("subjects").select("*"),
+  ]);
+  if (gradesRes.error) throw new Error(`getStudentSubjectTrajectory (grades): ${gradesRes.error.message}`);
+  if (subjectsRes.error) throw new Error(`getStudentSubjectTrajectory (subjects): ${subjectsRes.error.message}`);
+
+  const subjectsByCode = new Map(((subjectsRes.data ?? []) as Subject[]).map((s) => [s.code, s]));
+  const bySubject = new Map<string, { academic_year: string; moyenne_matiere: number | null }[]>();
+
+  for (const g of (gradesRes.data ?? []) as Pick<Grade, "student_id" | "subject_code" | "moyenne_matiere">[]) {
+    const academicYear = yearByStudentId.get(g.student_id);
+    if (!academicYear) continue;
+    const list = bySubject.get(g.subject_code) ?? [];
+    list.push({ academic_year: academicYear, moyenne_matiere: g.moyenne_matiere });
+    bySubject.set(g.subject_code, list);
+  }
+
+  return [...bySubject.entries()]
+    .map(([code, points]) => ({
+      subject_code: code,
+      subject_nom_fr: subjectsByCode.get(code)?.nom_fr ?? code,
+      points: points.sort((a, b) => a.academic_year.localeCompare(b.academic_year)),
+    }))
+    .sort((a, b) => a.subject_nom_fr.localeCompare(b.subject_nom_fr));
 }
