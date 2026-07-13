@@ -158,6 +158,14 @@ def parse_file(path: str) -> ParsedFile:
     result.classe_content = result.metadata.get("classe_content")
     matiere_ar = result.metadata.get("matiere_content")
     result.matiere_content = MATIERE_AR_TO_CODE.get(matiere_ar, matiere_ar)
+    if matiere_ar is not None and matiere_ar not in MATIERE_AR_TO_CODE:
+        # Matière hors du périmètre modélisé (les 7 matières de MATIERE_AR_TO_CODE) :
+        # ex. Informatique. Distinct d'une matière au programme mais non suivie par
+        # un élève donné (ça, c'est "non_au_programme" dans build_coverage_matrix) —
+        # ici le fichier entier ne correspond à aucune matière connue du projet, donc
+        # on quarantaine plutôt que de laisser passer un code brut arabe qui violerait
+        # la contrainte de clé étrangère grades.subject_code à la persistance.
+        result.add_issue("MATIERE_HORS_PERIMETRE", matiere_ar)
 
     # Recoupement nom de fichier <-> contenu.
     if result.classe_filename and result.classe_content and result.classe_filename != result.classe_content:

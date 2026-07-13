@@ -46,7 +46,7 @@ def run(raw_dir: str, processed_dir: str, artifacts_dir: str) -> dict:
     parsed_ok, quarantined = [], []
     for f in files:
         parsed = parse_file(f)
-        blocking = {"FILE_UNREADABLE", "HEADER_NOT_FOUND", "NO_STUDENT_ROWS"}
+        blocking = {"FILE_UNREADABLE", "HEADER_NOT_FOUND", "NO_STUDENT_ROWS", "MATIERE_HORS_PERIMETRE"}
         if not parsed.ok or any(i["code"] in blocking for i in parsed.issues):
             quarantined.append(
                 {"source_file": os.path.basename(f), "issues": parsed.issues}
