@@ -77,6 +77,15 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/version")
+def version() -> dict:
+    """Diagnostic — Render injecte RENDER_GIT_COMMIT automatiquement à chaque
+    déploiement (aucune config requise) : permet de vérifier depuis
+    l'extérieur quel commit tourne réellement, sans accès au dashboard,
+    plutôt que de deviner face à une erreur qui persiste après un push."""
+    return {"git_commit": os.environ.get("RENDER_GIT_COMMIT", "unknown")}
+
+
 @app.post("/import")
 async def import_endpoint(
     academic_year: str = Form(...),
