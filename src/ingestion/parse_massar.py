@@ -34,6 +34,13 @@ MATIERE_AR_TO_CODE = {
     "اللغة الإنجليزية": "LANGUE ANGLAISE",
     "الاجتماعيات": "HISTOIRE GEOGRAPHIE",
     "المعلوميات": "INFORMATIQUE",
+    # Ajoutés sur demande, sans fichier Massar réel pour confirmer le libellé
+    # exact (aucun des 75 fichiers de data/raw/ ne couvre ces 3 matières) —
+    # à vérifier contre un vrai export si l'une d'elles finit un jour en
+    # quarantaine sous MATIERE_HORS_PERIMETRE avec un libellé différent.
+    "التربية الإسلامية": "EDUCATION ISLAMIQUE",
+    "التكنولوجيا": "TECHNOLOGIE",
+    "التربية البدنية": "EDUCATION PHYSIQUE",
 }
 
 # Métadonnées d'en-tête : libellé arabe -> nom de champ. La valeur est cherchée en

@@ -63,6 +63,25 @@ def test_informatique_est_mappee_vers_son_code_canonique(tmp_path):
     assert not any(i["code"] == "MATIERE_HORS_PERIMETRE" for i in result.issues)
 
 
+@pytest.mark.parametrize(
+    "matiere_ar,code_attendu",
+    [
+        ("التربية الإسلامية", "EDUCATION ISLAMIQUE"),
+        ("التكنولوجيا", "TECHNOLOGIE"),
+        ("التربية البدنية", "EDUCATION PHYSIQUE"),
+    ],
+)
+def test_matieres_ajoutees_sans_fichier_reel_sont_mappees(tmp_path, matiere_ar, code_attendu):
+    # Libellés non vérifiés contre un vrai export Massar (aucun des 75 fichiers
+    # de data/raw/ ne couvre ces matières) — ce test fige seulement le mapping
+    # ajouté, pas une garantie que Massar utilise exactement ce texte.
+    path = os.path.join(tmp_path, f"Export_28847E_2APIC-1_{code_attendu}_20260101000000.xlsx")
+    _build_massar_like_file(path, matiere_ar)
+    result = parse_file(path)
+    assert result.matiere_content == code_attendu
+    assert not any(i["code"] == "MATIERE_HORS_PERIMETRE" for i in result.issues)
+
+
 def test_matiere_inconnue_est_signalee_et_bloquante(tmp_path):
     matiere_inconnue = "مادة اختبار غير معروفة"  # libellé fictif, jamais dans MATIERE_AR_TO_CODE
     path = os.path.join(tmp_path, "Export_28847E_2APIC-1_INCONNUE_20260101000000.xlsx")
