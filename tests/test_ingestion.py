@@ -1,12 +1,14 @@
 """Étape A — parsing : matières hors périmètre modélisé.
 
-Régression pour le bug réel observé en production : un export Massar pour
-une matière non modélisée (ex. Informatique, "المعلوميات") n'était pas
-reconnu par MATIERE_AR_TO_CODE, et le code arabe brut finissait comme
+Régression pour le bug réel observé en production : un export Massar pour une
+matière absente de MATIERE_AR_TO_CODE (ex. Informatique, "المعلوميات", avant
+l'ajout de son entrée) laissait passer le code arabe brut comme
 `matiere`/`subject_code` jusqu'à la persistance, où il violait la contrainte
-de clé étrangère `grades_subject_code_fkey` (aucune ligne correspondante
-dans `subjects`, qui ne contient que les 7 matières modélisées). Le fichier
-doit être mis en quarantaine au parsing, comme un fichier illisible."""
+de clé étrangère `grades_subject_code_fkey` (aucune ligne correspondante dans
+`subjects`). Le fichier doit être mis en quarantaine au parsing, comme un
+fichier illisible. On utilise ici un libellé arabe fictif pour tester ce cas
+— "المعلوميات" est désormais reconnu (mappé vers INFORMATIQUE, présent dans
+`subjects`) et ne doit donc plus déclencher ce chemin."""
 import os
 import shutil
 import tempfile
@@ -51,15 +53,26 @@ def test_matiere_connue_ne_declenche_aucun_probleme(tmp_path):
     assert not any(i["code"] == "MATIERE_HORS_PERIMETRE" for i in result.issues)
 
 
-def test_matiere_hors_perimetre_est_signalee_et_bloquante(tmp_path):
+def test_informatique_est_mappee_vers_son_code_canonique(tmp_path):
+    # Régression exacte du bug rapporté : "المعلوميات" doit résoudre vers le
+    # code déjà présent dans `subjects` (INFORMATIQUE), jamais rester en arabe brut.
     path = os.path.join(tmp_path, "Export_28847E_2APIC-1_INFORMATIQUE_20260101000000.xlsx")
     _build_massar_like_file(path, "المعلوميات")
     result = parse_file(path)
+    assert result.matiere_content == "INFORMATIQUE"
+    assert not any(i["code"] == "MATIERE_HORS_PERIMETRE" for i in result.issues)
 
-    assert result.matiere_content == "المعلوميات"  # code brut, jamais un code canonique inventé
+
+def test_matiere_inconnue_est_signalee_et_bloquante(tmp_path):
+    matiere_inconnue = "مادة اختبار غير معروفة"  # libellé fictif, jamais dans MATIERE_AR_TO_CODE
+    path = os.path.join(tmp_path, "Export_28847E_2APIC-1_INCONNUE_20260101000000.xlsx")
+    _build_massar_like_file(path, matiere_inconnue)
+    result = parse_file(path)
+
+    assert result.matiere_content == matiere_inconnue  # code brut, jamais un code canonique inventé
     matiere_issues = [i for i in result.issues if i["code"] == "MATIERE_HORS_PERIMETRE"]
     assert len(matiere_issues) == 1
-    assert matiere_issues[0]["detail"] == "المعلوميات"
+    assert matiere_issues[0]["detail"] == matiere_inconnue
 
     # C'est bien ce code qui fait quarantiner le fichier en amont de la persistance
     # (score_import._ingest_and_clean / pipeline_run.run) — sinon ce texte brut finirait

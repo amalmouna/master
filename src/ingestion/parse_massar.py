@@ -33,6 +33,7 @@ MATIERE_AR_TO_CODE = {
     "اللغة الفرنسية": "LANGUE FRANCAISE",
     "اللغة الإنجليزية": "LANGUE ANGLAISE",
     "الاجتماعيات": "HISTOIRE GEOGRAPHIE",
+    "المعلوميات": "INFORMATIQUE",
 }
 
 # Métadonnées d'en-tête : libellé arabe -> nom de champ. La valeur est cherchée en
