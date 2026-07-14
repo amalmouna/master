@@ -79,6 +79,16 @@ class SupabaseRestClient:
             raise RuntimeError(f"Échec lecture '{table}' : {resp.status_code} {resp.text[:500]}")
         return resp.json()
 
+    def delete(self, table: str, filters: dict[str, str]) -> None:
+        """Suppression générique (ex. purger les anciennes `recommendations`
+        d'un élève avant d'insérer le nouveau jeu recalculé — cette table n'a
+        pas de contrainte unique permettant un upsert, contrairement à
+        students/grades/clusters/predictions)."""
+        endpoint = f"{self.url}/rest/v1/{table}"
+        resp = self._session.delete(endpoint, params=filters, headers={"Prefer": "return=minimal"})
+        if resp.status_code >= 300:
+            raise RuntimeError(f"Échec suppression '{table}' : {resp.status_code} {resp.text[:500]}")
+
     def count(self, table: str, filters: dict[str, str] | None = None) -> int:
         """Compte les lignes visibles (via le header Content-Range PostgREST),
         filtrées par ex. {'dataset_id': 'eq.<uuid>'}."""

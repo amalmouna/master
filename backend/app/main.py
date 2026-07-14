@@ -1,8 +1,19 @@
 """Backend FastAPI — import Massar authentifié (admin uniquement), score-only.
 
-Lance le pipeline déjà entraîné (src/score_import.run_import) sur un nouvel
-import, puis écrit le résultat dans Supabase pour l'academic_year fourni
-(src/persistence/push_scored_import.push_scored_import). Ne réentraîne rien.
+Lance le pipeline déjà entraîné (src/incremental_import.run_incremental_import)
+sur un nouvel import, puis écrit le résultat dans Supabase pour l'academic_year
+fourni (src/persistence/push_scored_import.push_incremental_import). Ne
+réentraîne rien.
+
+Additif par construction : un lot ne contenant aucun élève déjà importé cette
+année scolaire se comporte comme un premier import complet (chemin identique
+à l'ancien score_import.run_import/push_scored_import, conservés pour la
+relecture de non-régression des tests — cf. tests/test_score_import.py) ; un
+lot contenant des élèves déjà présents fusionne leurs nouvelles matières avec
+celles déjà en base avant de re-scorer, au lieu d'échouer sur
+students_pseudo_academic_year_unique (cf. incremental_import.py pour le
+détail — un vrai fichier Massar = une classe x une matière, donc une classe
+complète nécessite plusieurs imports successifs, un par matière)."""
 
 Les fichiers .xlsx uploadés sont écrits dans un dossier temporaire, jamais
 persistés au-delà de la requête (suppression garantie via `finally`, même en
@@ -43,8 +54,8 @@ MODELS_DIR = os.path.join(REPO_ROOT, "data", "artifacts", "models")
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env.local"))
 load_dotenv(os.path.join(REPO_ROOT, ".env.local"))
 
-from score_import import run_import  # noqa: E402 (après sys.path.insert, nécessaire)
-from persistence.push_scored_import import push_scored_import  # noqa: E402
+from incremental_import import run_incremental_import  # noqa: E402 (après sys.path.insert, nécessaire)
+from persistence.push_scored_import import push_incremental_import  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend.import")
@@ -113,12 +124,12 @@ async def import_endpoint(
         logger.info("Import démarré : %d fichier(s) reçu(s), academic_year=%s", n_saved, academic_year)
 
         try:
-            result = run_import(tmp_dir, academic_year, models_dir=MODELS_DIR)
+            result = run_incremental_import(tmp_dir, academic_year, models_dir=MODELS_DIR)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
-            push_result = push_scored_import(result, label=f"Import {academic_year}")
+            push_result = push_incremental_import(result, label=f"Import {academic_year}")
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -126,6 +137,8 @@ async def import_endpoint(
             "dataset_id": push_result["dataset_id"],
             "academic_year": academic_year,
             "students_imported": result["n_students"],
+            "students_nouveaux": result["n_students_nouveaux"],
+            "students_completes": result["n_students_completes"],
             "n_a_risque_observe": result["n_a_risque_observe"],
             "n_a_risque_predit": result["n_a_risque_predit"],
             "coverage_counts": result["coverage_counts"],

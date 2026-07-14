@@ -198,3 +198,98 @@ def push_scored_import(result: dict, label: str, semestre: str = "Semestre 1") -
         client.insert("recommendations", recs)
 
     return {"dataset_id": dataset_id, "counts": counts_local, "model_run_ids_reused": run_ids}
+
+
+def push_incremental_import(result: dict, label: str, semestre: str = "Semestre 1") -> dict:
+    """Envoie le résultat en mémoire de incremental_import.run_incremental_import()
+    vers Supabase. Contrairement à push_scored_import : upsert (jamais un
+    échec sur students_pseudo_academic_year_unique) — un élève déjà importé
+    cette année scolaire garde son id (result['pseudo_to_id'], construit par
+    run_incremental_import à partir de l'existant en base) et voit sa ligne
+    `students`/`clusters`/`predictions` mise à jour en place plutôt que
+    dupliquée. `grades` n'upserte QUE les matières du lot courant
+    (notes_long_new), pas tout le profil fusionné (notes_long_aggregated,
+    qui inclut des lignes déjà en base et sert uniquement au scoring/aux
+    recommandations, cf. incremental_import.py) — réécrire des lignes
+    inchangées serait un coût inutile, pas une erreur, mais ce module l'évite.
+    `recommendations` n'a pas de contrainte unique permettant un upsert : les
+    anciennes recommandations des élèves affectés sont purgées avant
+    d'insérer le nouveau jeu recalculé, pour ne jamais accumuler de
+    recommandations obsolètes d'un import additif à l'autre."""
+    academic_year = result["academic_year"]
+    profile = result["profile"]
+    identity = result["identity_mapping"]
+    new_long = result["notes_long_new"]
+    full_long = result["notes_long_aggregated"]
+    recommendations = result["recommendations"]
+    pseudo_to_id = result["pseudo_to_id"]
+
+    niveaux = result["niveaux"]
+    dataset_id = str(uuid.uuid4())
+
+    quality_summary = {
+        "n_files_discovered": result["n_files_discovered"],
+        "n_files_parsed_ok": result["n_files_parsed_ok"],
+        "n_files_quarantined": result["n_files_quarantined"],
+        "n_students_affectes": result["n_students"],
+        "n_students_nouveaux": result["n_students_nouveaux"],
+        "n_students_completes": result["n_students_completes"],
+        "n_enregistrements_lot": len(new_long),
+        "n_enregistrements_fusionnes": len(full_long),
+        "niveaux": niveaux,
+        "classes": result["classes"],
+        "matieres": result["matieres"],
+        "coverage_counts": result["coverage_counts"],
+        "n_anomalies_bornes": result["n_anomalies_bornes"],
+        "n_doublons": result["n_doublons"],
+    }
+
+    dataset_row = {
+        "id": dataset_id,
+        "label": label,
+        "annee_scolaire": academic_year,
+        "semestre": semestre,
+        "date_import": datetime.now(timezone.utc).isoformat(),
+        "n_eleves": result["n_students"],
+        "n_enregistrements": len(new_long),
+        "statut": "charge",
+        "quality_summary": quality_summary,
+        "risk_config": compute_risk_config(),
+    }
+
+    subjects = build_subjects_payload()
+    students, _ = build_students_payload(dataset_id, academic_year, profile, identity, pseudo_to_id=pseudo_to_id)
+    grades = build_grades_payload(dataset_id, pseudo_to_id, new_long)
+
+    client = SupabaseRestClient()
+    run_ids = lookup_model_run_ids(client, niveaux)
+
+    clusters = _build_clusters_payload(dataset_id, pseudo_to_id, run_ids, profile)
+    predictions = _build_predictions_payload(dataset_id, pseudo_to_id, run_ids, profile)
+    recs = _build_recommendations_payload(dataset_id, pseudo_to_id, recommendations, profile)
+
+    counts_local = {
+        "subjects": len(subjects),
+        "students": len(students),
+        "grades": len(grades),
+        "clusters": len(clusters),
+        "predictions": len(predictions),
+        "recommendations": len(recs),
+    }
+
+    client.insert("subjects", subjects, upsert_on_conflict="code")
+    client.insert("datasets", [dataset_row])
+    client.insert("students", students, upsert_on_conflict="id")
+    client.insert("grades", grades, upsert_on_conflict="student_id,subject_code")
+    if clusters:
+        client.insert("clusters", clusters, upsert_on_conflict="student_id")
+    if predictions:
+        client.insert("predictions", predictions, upsert_on_conflict="student_id")
+
+    affected_ids = list(pseudo_to_id.values())
+    if affected_ids:
+        client.delete("recommendations", {"student_id": f"in.({','.join(affected_ids)})"})
+    if recs:
+        client.insert("recommendations", recs)
+
+    return {"dataset_id": dataset_id, "counts": counts_local, "model_run_ids_reused": run_ids}

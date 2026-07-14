@@ -114,6 +114,7 @@ def build_students_payload(
     annee_scolaire: str,
     profile: pd.DataFrame,
     identity: pd.DataFrame,
+    pseudo_to_id: dict[str, str] | None = None,
 ) -> tuple[list[dict], dict[str, str]]:
     """Architecture privée/authentifiée (voir schema.sql) : joint le nom réel
     et l'âge exact depuis `identity` (identity_mapping.csv ou
@@ -128,10 +129,17 @@ def build_students_payload(
     students.student_pseudo étant stable à travers les années (même sel), la
     contrainte unique (student_pseudo, academic_year) empêche qu'un même élève
     soit inséré deux fois pour la même année si ce script est relancé par
-    erreur sur le même import."""
+    erreur sur le même import.
+
+    `pseudo_to_id` — fourni par incremental_import.run_incremental_import
+    pour réutiliser l'id existant d'un élève déjà importé cette année
+    (upsert en place), plutôt que d'en générer un nouveau qui casserait les
+    FK grades/clusters/predictions/recommendations déjà écrites. None (cas
+    normal, premier import) : génère un uuid4 pour chaque élève, comme avant."""
     identity = identity[["student_pseudo", "nom_complet", "age"]]
 
-    pseudo_to_id = {p: str(uuid.uuid4()) for p in profile["student_pseudo"]}
+    if pseudo_to_id is None:
+        pseudo_to_id = {p: str(uuid.uuid4()) for p in profile["student_pseudo"]}
     cols = [
         "niveau",
         "classe",

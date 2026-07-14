@@ -19,6 +19,8 @@ interface ImportSummary {
   dataset_id: string;
   academic_year: string;
   students_imported: number;
+  students_nouveaux: number;
+  students_completes: number;
   n_a_risque_observe: number;
   n_a_risque_predit: number;
   coverage_counts: Record<string, number>;
@@ -226,8 +228,10 @@ export function ImportForm() {
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
           <div>
-            <span className="text-muted-foreground">Élèves importés</span>
-            <div className="font-semibold text-foreground">{summary.students_imported}</div>
+            <span className="text-muted-foreground">Élèves affectés (nouveaux / complétés)</span>
+            <div className="font-semibold text-foreground">
+              {summary.students_imported} ({summary.students_nouveaux} / {summary.students_completes})
+            </div>
           </div>
           <div>
             <span className="text-muted-foreground">À risque (observé / prédit)</span>
@@ -286,10 +290,18 @@ export function ImportForm() {
 
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-3">
-      <div className="rounded-md border border-border bg-background p-2.5 text-xs text-muted-foreground">
-        Le premier import après une période d&apos;inactivité peut prendre jusqu&apos;à ~2
-        minutes (démarrage à froid du serveur + environ 1 minute de traitement). Une réponse
-        lente n&apos;est pas un signe de panne.
+      <div className="rounded-md border border-border bg-background p-2.5 text-xs text-muted-foreground space-y-1">
+        <p>
+          Un fichier Massar = une classe × une matière : vous pouvez importer les matières
+          d&apos;une classe une à une, à des moments différents, pour la même année scolaire —
+          chaque nouvel import complète le profil des élèves déjà importés plutôt que de le
+          remplacer.
+        </p>
+        <p>
+          Le premier import après une période d&apos;inactivité peut prendre jusqu&apos;à ~2
+          minutes (démarrage à froid du serveur + environ 1 minute de traitement). Une réponse
+          lente n&apos;est pas un signe de panne.
+        </p>
       </div>
 
       <div>
