@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, BarChart3, AlertTriangle, Boxes, Users, Upload, LogOut } from "lucide-react";
+import { LayoutDashboard, BarChart3, AlertTriangle, Boxes, Users, Upload, LogOut, School } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Vue d'ensemble", icon: LayoutDashboard },
   { href: "/matieres", label: "Moyennes par matière", icon: BarChart3 },
   { href: "/risque", label: "Élèves à risque", icon: AlertTriangle },
   { href: "/profils", label: "Profils", icon: Boxes },
+  { href: "/classes", label: "Classes", icon: School },
 ];
 
 const ADMIN_NAV_ITEMS = [

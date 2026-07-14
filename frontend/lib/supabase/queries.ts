@@ -637,6 +637,71 @@ export async function getRecommendationsForExport(datasetIds: string[]): Promise
     .sort((a, b) => a.classe.localeCompare(b.classe) || a.priorite - b.priorite);
 }
 
+export interface ClassCoverageRow {
+  student_id: string;
+  student_pseudo: string;
+  nom_complet: string | null;
+  parMatiere: Record<string, number | null>; // subject_code -> moyenne_matiere, null si aucune ligne grades
+}
+
+export interface ClassCoverageResult {
+  eleves: ClassCoverageRow[];
+  matieres: Subject[];
+}
+
+/** Grille élève x matière pour une classe (une année scolaire donnée, via
+ * `datasetIds`) — permet de voir en un coup d'œil quelles matières manquent
+ * encore pour cette classe (import additif §10 : un fichier Massar = une
+ * classe x une matière, donc une classe se complète import après import).
+ * Même construction que getSubjectSignals (grades + subjects), mais sans
+ * collapse par matière : une ligne par élève, une colonne par matière. */
+export async function getClassCoverage(datasetIds: string[], classe: string): Promise<ClassCoverageResult> {
+  if (datasetIds.length === 0) return { eleves: [], matieres: [] };
+  const supabase = await createSupabaseServerClient();
+
+  const [studentsRes, subjectsRes] = await Promise.all([
+    supabase
+      .from("students")
+      .select("id, student_pseudo, nom_complet")
+      .in("dataset_id", datasetIds)
+      .eq("classe", classe),
+    supabase.from("subjects").select("*"),
+  ]);
+  if (studentsRes.error) throw new Error(`getClassCoverage (students): ${studentsRes.error.message}`);
+  if (subjectsRes.error) throw new Error(`getClassCoverage (subjects): ${subjectsRes.error.message}`);
+
+  const students = (studentsRes.data ?? []) as Pick<Student, "id" | "student_pseudo" | "nom_complet">[];
+  const matieres = ((subjectsRes.data ?? []) as Subject[]).sort((a, b) => a.nom_fr.localeCompare(b.nom_fr));
+  if (students.length === 0) return { eleves: [], matieres };
+
+  const studentIds = students.map((s) => s.id);
+  const grades = await fetchAllRows<Pick<Grade, "student_id" | "subject_code" | "moyenne_matiere">>(
+    (from, to) =>
+      supabase
+        .from("grades")
+        .select("student_id, subject_code, moyenne_matiere")
+        .in("student_id", studentIds)
+        .range(from, to)
+  );
+
+  const byStudent = new Map<string, Record<string, number | null>>();
+  for (const s of students) byStudent.set(s.id, {});
+  for (const g of grades) {
+    byStudent.get(g.student_id)![g.subject_code] = g.moyenne_matiere;
+  }
+
+  const eleves: ClassCoverageRow[] = students
+    .map((s) => ({
+      student_id: s.id,
+      student_pseudo: s.student_pseudo,
+      nom_complet: s.nom_complet,
+      parMatiere: byStudent.get(s.id) ?? {},
+    }))
+    .sort((a, b) => (a.nom_complet ?? a.student_pseudo).localeCompare(b.nom_complet ?? b.student_pseudo));
+
+  return { eleves, matieres };
+}
+
 export interface NiveauSynthese {
   niveau: string;
   n_eleves: number;
