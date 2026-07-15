@@ -13,7 +13,7 @@ lot contenant des élèves déjà présents fusionne leurs nouvelles matières a
 celles déjà en base avant de re-scorer, au lieu d'échouer sur
 students_pseudo_academic_year_unique (cf. incremental_import.py pour le
 détail — un vrai fichier Massar = une classe x une matière, donc une classe
-complète nécessite plusieurs imports successifs, un par matière)."""
+complète nécessite plusieurs imports successifs, un par matière).
 
 Les fichiers .xlsx uploadés sont écrits dans un dossier temporaire, jamais
 persistés au-delà de la requête (suppression garantie via `finally`, même en
